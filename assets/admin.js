@@ -1,0 +1,586 @@
+/* 2027 수능 성적·후기 조사 — 관리자 화면
+   등급은 DB에 없다. 원점수 + 학생이 고른 등급만 저장하고, 여기서 등급컷으로 그때그때 계산한다. */
+(function () {
+  'use strict';
+  var CFG = window.SURVEY_CFG;
+  var sb = window.supabase.createClient(CFG.url, CFG.key, { auth: { persistSession: false, autoRefreshToken: false } });
+  var TK = 'survey_admin_token';
+  var token = sessionStorage.getItem(TK) || '';
+  var D = null;                       // survey_admin_data 결과
+  var tab = 'approve';
+  var UI = { list: 'pending', base: '9', fCourse: 'all', fSubj: 'all', fStart: 'all', withRejected: false };
+
+  var EXAMS = [['m6', '6월 모평'], ['m9', '9월 모평'], ['sn', '수능 가채점']];
+  var SUBJ = { hwa: '화법과 작문', eon: '언어와 매체' };
+  var SUBJ_S = { hwa: '화작', eon: '언매' };
+  var START = { sep_early: '9월 초', sep_mid: '9월 중순(9평 이후)', oct: '10월 이후' };
+  var COURSE = { online: '온라인', offline: '현장강의' };
+  var HELPFUL = ['1일 1지문 매일 루틴', '1:1 코칭·피드백', '24시간 질문', '한수 실전 모의고사',
+    '해설 강의', 'EBS 수특·수완 정리', '학습 데이터 레포트', '완주 환급(동기부여)'];
+  var WARN_MSG = '이미 기프티콘을 받은 학생일 수 있습니다. 그래도 승인할까요?';
+
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function digits(s) { return String(s || '').replace(/\D/g, ''); }
+  function nk(s) { return String(s || '').replace(/\s/g, ''); }
+  function fmtPhone(d) { d = digits(d); return d.length === 11 ? d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7) : d; }
+  function fmtTime(t) {
+    if (!t) return '';
+    var d = new Date(t), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function mask(name) { name = String(name || '').trim(); return name ? name[0] + '○'.repeat(Math.max(name.length - 1, 2)) : ''; }
+  function pct(a, b) { return b ? Math.round(a / b * 1000) / 10 : 0; }
+  function avg(arr) { return arr.length ? Math.round(arr.reduce(function (s, x) { return s + x; }, 0) / arr.length * 10) / 10 : null; }
+  function toast(msg) { var t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(function () { t.hidden = true; }, 2600); }
+
+  function rpc(fn, args) {
+    return sb.rpc(fn, args || {}).then(function (r) {
+      if (r.error) {
+        if (/admin_auth/.test(r.error.message || '')) { logout(); throw new Error('다시 로그인해 주세요'); }
+        throw new Error(r.error.message || '오류');
+      }
+      return r.data;
+    });
+  }
+
+  /* ---------- 로그인 ---------- */
+  function showLogin() { $('main').hidden = true; $('login').hidden = false; $('pw').focus(); }
+  function logout() { token = ''; sessionStorage.removeItem(TK); showLogin(); }
+  function login() {
+    var pw = $('pw').value; $('pwerr').textContent = '';
+    if (!pw) return;
+    $('pwbtn').disabled = true;
+    rpc('survey_admin_login', { p_password: pw }).then(function (d) {
+      if (!d || !d.ok) { $('pwerr').textContent = d && d.reason === 'locked' ? '실패가 많아 10분 동안 잠겼습니다.' : '비밀번호가 맞지 않습니다.'; return; }
+      token = d.token; sessionStorage.setItem(TK, token); $('pw').value = '';
+      $('login').hidden = true; $('main').hidden = false; load();
+    }).catch(function (e) { $('pwerr').textContent = '연결 오류: ' + e.message; })
+      .then(function () { $('pwbtn').disabled = false; });
+  }
+  $('pwbtn').onclick = login;
+  $('pw').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
+
+  function load() {
+    return rpc('survey_admin_data', { p_token: token }).then(function (d) { D = d; render(); })
+      .catch(function (e) { $('view').innerHTML = '<div class="panel">불러오지 못했습니다: ' + esc(e.message) + '</div>'; });
+  }
+  $('reload').onclick = function () { load().then(function () { toast('새로 불러왔습니다'); }); };
+  $('tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-tab]'); if (!b) return;
+    tab = b.getAttribute('data-tab');
+    Array.prototype.forEach.call($('tabs').children, function (x) { x.classList.toggle('on', x === b); });
+    render();
+  });
+
+  /* ---------- 등급 계산 ---------- */
+  // 컷 배열 [1등급컷 … 8등급컷], 8등급 컷 미만은 9등급. 필요한 칸이 비어 있으면 계산 불가(null).
+  function gradeFromRaw(exam, subj, raw) {
+    if (raw == null || !subj) return null;
+    var c = D.settings.cuts && D.settings.cuts[exam] && D.settings.cuts[exam][subj];
+    if (!c) return null;
+    for (var i = 0; i < 8; i++) {
+      if (c[i] == null || c[i] === '') return null;
+      if (raw >= c[i]) return i + 1;
+    }
+    return 9;
+  }
+  // { g: 등급|null, how: 'score'|'self'|null, raw }
+  function gradeOf(r, exam) {
+    var raw = r[exam + '_raw'];
+    if (raw != null) {
+      var g = gradeFromRaw(exam, r.subject, raw);
+      return { g: g, how: 'score', raw: raw, nocut: g == null };
+    }
+    if (exam !== 'sn' && r[exam + '_grade'] != null) return { g: r[exam + '_grade'], how: 'self', raw: null };
+    return { g: null, how: null, raw: null };
+  }
+  function gradeCell(r, exam) {
+    var x = gradeOf(r, exam);
+    if (x.how === 'score') return (x.g ? x.g + '등급' : '<span class="muted">컷 없음</span>') + ' <span class="how">점수 환산 · ' + x.raw + '점</span>';
+    if (x.how === 'self') return x.g + '등급 <span class="how">직접 입력</span>';
+    var st = r[exam + '_status'];
+    return '<span class="muted">' + (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : '-') + '</span>';
+  }
+  function scoreCount(r) {
+    var n = 0;
+    EXAMS.forEach(function (e) { if (gradeOf(r, e[0]).how) n++; });
+    return n;
+  }
+
+  /* ---------- 배지 ---------- */
+  function badges(r) {
+    var out = [], warn = false;
+    var key = nk(r.name), ph = digits(r.phone);
+    var same = D.roster.filter(function (x) { return x.name_key === key; });
+    var exact = ph ? same.filter(function (x) { return x.phone === ph; }) : [];
+    var roster;
+    if (exact.length) {
+      var chk = exact.some(function (x) { return x.status !== '정상'; });
+      roster = chk ? 'chk' : 'ok';
+      out.push(chk ? '<span class="badge b-chk">명단 ✓(번호 확인 필요)</span>' : '<span class="badge b-ok">명단 ✓</span>');
+    } else {
+      roster = 'no';
+      out.push('<span class="badge b-no">명단에 없음</span>');
+      if (same.length && ph) { out.push('<span class="badge b-warn">⚠ 번호 다름</span>'); warn = true; }
+    }
+    var dupe = D.responses.some(function (o) { return o.id !== r.id && o.status === 'approved' && nk(o.name) === key; });
+    if (dupe) { out.push('<span class="badge b-warn">⚠ 이미 받음 의심 (같은 이름)</span>'); warn = true; }
+    return { html: out.join(''), warn: warn, roster: roster };
+  }
+
+  /* ---------- 기프티콘 재고 ---------- */
+  function stock() {
+    var live = D.gifts.filter(function (g) { return !g.retired || g.response_id; });
+    var given = D.gifts.filter(function (g) { return g.response_id; }).length;
+    var left = D.gifts.filter(function (g) { return !g.response_id && !g.retired; }).length;
+    return { total: live.length, left: left, given: given };
+  }
+  function giftOf(rid) { for (var i = 0; i < D.gifts.length; i++) if (D.gifts[i].response_id === rid) return D.gifts[i]; return null; }
+
+  function render() {
+    if (!D) return;
+    var v = $('view');
+    ({ approve: vApprove, stats: vStats, reviews: vReviews, messages: vMessages, gifts: vGifts, roster: vRoster, cuts: vCuts, settings: vSettings })[tab](v);
+  }
+
+  /* ============ 승인 ============ */
+  function surveyUrl() {
+    if (D.settings.survey_url) return D.settings.survey_url;
+    return location.origin + location.pathname.replace(/admin\.html.*$/, '');
+  }
+  function smsText() {
+    return '[마라톤국어] 설문 감사해요! 「기프티콘 확인」을 눌러 받아 가세요 ' + surveyUrl().replace(/\/$/, '') + '/#gift';
+  }
+  function vApprove(v) {
+    var s = stock();
+    var all = D.responses.slice().sort(function (a, b) { return b.id - a.id; });
+    var cnt = { pending: 0, approved: 0, rejected: 0 };
+    all.forEach(function (r) { cnt[r.status]++; });
+    var list = UI.list === 'all' ? all : all.filter(function (r) { return r.status === UI.list; });
+    var bulk = all.filter(function (r) { if (r.status !== 'pending') return false; var b = badges(r); return b.roster === 'ok' && !b.warn; });
+    var unnotified = all.filter(function (r) { return r.status === 'approved' && !r.notified_at && r.phone; });
+    var paidPhones = all.filter(function (r) { return r.status === 'approved' && r.phone && giftOf(r.id); }).length;
+
+    var h = '';
+    h += '<div class="cards">' +
+      card('승인 대기', cnt.pending, '명') + card('승인', cnt.approved, '명') + card('반려', cnt.rejected, '명') +
+      card('기프티콘 남음', s.left, '장', '전체 ' + s.total + ' · 지급됨 ' + s.given, s.left === 0) + '</div>';
+    if (s.left === 0) h += '<div class="stockout">기프티콘 재고 없음 — 「기프티콘」 탭에서 이미지를 올려 주세요.</div>';
+    h += '<div class="panel"><div class="toolbar">' +
+      '<div class="chips">' + [['pending', '승인 대기 ' + cnt.pending], ['approved', '승인 ' + cnt.approved], ['rejected', '반려 ' + cnt.rejected], ['all', '전체 ' + all.length]].map(function (x) {
+        return '<button class="mini' + (UI.list === x[0] ? ' on' : '') + '" data-list="' + x[0] + '">' + x[1] + '</button>';
+      }).join('') + '</div><span class="sp"></span>' +
+      '<button class="mini red" id="bulk"' + (bulk.length && s.left ? '' : ' disabled') + ' title="⚠ 없고 「명단 ✓」인 대기 줄만 (번호 확인 필요 줄은 빼고)">일괄 승인 ' + bulk.length + '명</button>' +
+      '<button class="mini" id="smsx"' + (unnotified.length ? '' : ' disabled') + '>승인자 문자용 엑셀 ' + unnotified.length + '명</button>' +
+      '<button class="mini danger" id="delph"' + (paidPhones ? '' : ' disabled') + '>지급 완료 번호 일괄 삭제</button>' +
+      '</div>';
+    var sl = smsText().length;
+    h += '<p class="small muted" style="margin:-4px 0 12px">문자 안내 문구(<b style="color:' + (sl > 90 ? 'var(--red)' : 'inherit') + '">' + sl + '자' + (sl > 90 ? ' · 90자 넘음 — 설정에서 짧은 주소로 바꿔 주세요' : '') + '</b>): ' + esc(smsText()) + '</p>';
+    if (!list.length) h += '<p class="muted">해당하는 응답이 없습니다.</p>';
+    else {
+      h += '<div class="wrap"><table class="t"><thead><tr><th>이름</th><th>번호</th><th>강의</th><th>점수</th><th>만족도</th><th>후기 앞부분</th><th>제출</th><th>확인</th><th></th></tr></thead><tbody>';
+      list.forEach(function (r) {
+        var b = badges(r), g = giftOf(r.id), act = '';
+        if (r.status === 'pending') {
+          act = '<button class="mini red" data-ap="' + r.id + '" data-warn="' + (b.warn ? 1 : 0) + '"' + (s.left ? '' : ' disabled title="기프티콘 재고 없음"') + '>승인</button> ' +
+            '<button class="mini" data-rj="' + r.id + '">반려</button>';
+        } else if (r.status === 'rejected') {
+          act = '<span class="badge b-st-rejected">반려</span> <button class="mini" data-pd="' + r.id + '">대기로</button>';
+        } else {
+          act = '<span class="badge b-st-approved">승인 · ' + esc(g ? g.label || ('#' + g.id) : '') + '</span>' +
+            (r.notified_at ? '<br><span class="small muted">문자 안내 완료 ' + fmtTime(r.notified_at) + '</span>' : '<br><span class="small" style="color:var(--warn)">문자 안내 전</span>');
+        }
+        h += '<tr' + (r.status === 'rejected' ? ' class="dim"' : '') + '>' +
+          '<td class="nowrap"><b>' + esc(r.name) + '</b></td>' +
+          '<td class="num">' + (r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + '</td>' +
+          '<td class="nowrap">' + (r.courses || []).map(function (c) { return COURSE[c] || c; }).join('·') + '</td>' +
+          '<td class="nowrap">' + scoreCount(r) + '/3 <span class="how">' + EXAMS.map(function (e) { return gradeOf(r, e[0]).how ? e[1].slice(0, 2) : ''; }).filter(Boolean).join('·') + '</span></td>' +
+          '<td class="num">' + (r.satisfaction ? r.satisfaction + '점' : '-') + '</td>' +
+          '<td class="snip">' + esc((r.review || '').slice(0, 40)) + (r.review && r.review.length > 40 ? '…' : '') + '</td>' +
+          '<td class="num">' + fmtTime(r.created_at) + '</td>' +
+          '<td>' + b.html + '</td><td class="nowrap">' + act + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+    }
+    h += '</div>';
+    v.innerHTML = h;
+
+    v.querySelectorAll('[data-list]').forEach(function (b) { b.onclick = function () { UI.list = b.getAttribute('data-list'); render(); }; });
+    v.querySelectorAll('[data-ap]').forEach(function (b) {
+      b.onclick = function () {
+        if (b.getAttribute('data-warn') === '1' && !confirm(WARN_MSG)) return;
+        approve([Number(b.getAttribute('data-ap'))]);
+      };
+    });
+    v.querySelectorAll('[data-rj]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-rj'))], 'rejected'); }; });
+    v.querySelectorAll('[data-pd]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-pd'))], 'pending'); }; });
+    $('bulk').onclick = function () {
+      if (!confirm('⚠ 없고 「명단 ✓」인 ' + bulk.length + '명을 한 번에 승인할까요?\n(기프티콘 ' + Math.min(bulk.length, s.left) + '장 배정)')) return;
+      approve(bulk.map(function (r) { return r.id; }));
+    };
+    $('smsx').onclick = function () { smsExcel(unnotified); };
+    $('delph').onclick = function () {
+      if (!confirm('삭제하면 학생이 기프티콘을 다시 볼 수 없습니다. 이벤트가 끝난 뒤에 누르세요.\n\n지급 완료된 ' + paidPhones + '명의 휴대폰 번호를 지울까요? (성적·만족도·후기·한마디는 남습니다)')) return;
+      rpc('survey_admin_delete_phones', { p_token: token }).then(function (d) { toast('번호 ' + d.changed + '개를 지웠습니다'); load(); }).catch(err);
+    };
+  }
+  function card(k, v, unit, sub, red) {
+    return '<div class="card"><div class="k">' + k + '</div><div class="v' + (red ? ' red' : '') + '">' + v + '<small style="font-size:15px;font-weight:600"> ' + (unit || '') + '</small></div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
+  }
+  function err(e) { toast('오류: ' + (e && e.message || e)); }
+  function approve(ids) {
+    rpc('survey_admin_approve', { p_token: token, p_ids: ids }).then(function (d) {
+      toast('승인 ' + d.approved + '명' + (d.no_stock ? ' · 재고 없어 못 한 ' + d.no_stock + '명' : ''));
+      return load();
+    }).catch(err);
+  }
+  function setStatus(ids, st) {
+    rpc('survey_admin_set_status', { p_token: token, p_ids: ids, p_status: st }).then(function () { toast(st === 'rejected' ? '반려했습니다' : '대기로 돌렸습니다'); return load(); }).catch(err);
+  }
+  function smsExcel(rows) {
+    var text = smsText();
+    var aoa = [['이름', '휴대폰', '안내 문구']].concat(rows.map(function (r) { return [r.name, fmtPhone(r.phone), text]; }));
+    var ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 10 }, { wch: 16 }, { wch: 90 }];
+    var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '문자');
+    XLSX.writeFile(wb, '승인자_문자_' + stamp() + '.xlsx');
+    rpc('survey_admin_mark_notified', { p_token: token, p_ids: rows.map(function (r) { return r.id; }) })
+      .then(function (d) { toast(d.changed + '명을 「문자 안내 완료」로 표시했습니다'); return load(); }).catch(err);
+  }
+  function stamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); }
+
+  /* ============ 통계 ============ */
+  function filtered() {
+    return D.responses.filter(function (r) {
+      if (!UI.withRejected && r.status === 'rejected') return false;
+      if (UI.fCourse !== 'all' && (r.courses || []).indexOf(UI.fCourse) < 0) return false;
+      if (UI.fSubj !== 'all' && r.subject !== UI.fSubj) return false;
+      if (UI.fStart !== 'all' && r.start_when !== UI.fStart) return false;
+      return true;
+    });
+  }
+  function startGrade(r) {
+    if (UI.base === '6') return gradeOf(r, 'm6').g;
+    var g9 = gradeOf(r, 'm9').g;
+    return g9 != null ? g9 : gradeOf(r, 'm6').g;
+  }
+  function chipGroup(key, opts) {
+    return opts.map(function (o) { return '<button class="mini' + (UI[key] === o[0] ? ' on' : '') + '" data-f="' + key + '" data-v="' + o[0] + '">' + o[1] + '</button>'; }).join('');
+  }
+  function vStats(v) {
+    var rs = filtered();
+    var cnt = { pending: 0, approved: 0, rejected: 0 };
+    D.responses.forEach(function (r) { cnt[r.status]++; });
+    var sats = rs.map(function (r) { return r.satisfaction; }).filter(function (x) { return x; });
+    var moves = [], up = 0, same = 0, down = 0;
+    rs.forEach(function (r) {
+      var a = startGrade(r), b = gradeOf(r, 'sn').g;
+      if (a == null || b == null) return;
+      moves.push([a, b]);
+      if (b < a) up++; else if (b === a) same++; else down++;
+    });
+    var mv = moves.length;
+
+    var h = '<div class="panel"><div class="toolbar">' +
+      '<span class="lbl">강의</span>' + chipGroup('fCourse', [['all', '전체'], ['online', '온라인'], ['offline', '현장강의']]) +
+      '<span class="lbl" style="margin-left:10px">과목</span>' + chipGroup('fSubj', [['all', '전체'], ['hwa', '화작'], ['eon', '언매']]) +
+      '<span class="lbl" style="margin-left:10px">시작</span>' + chipGroup('fStart', [['all', '전체'], ['sep_early', '9월 초'], ['sep_mid', '9월 중순'], ['oct', '10월 이후']]) +
+      '<span class="sp"></span><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="withrj"' + (UI.withRejected ? ' checked' : '') + '> 반려 포함</label>' +
+      '<button class="mini deep" id="xl">엑셀 다운로드</button></div>' +
+      '<p class="small muted" style="margin:0">지금 보는 응답 ' + rs.length + '명 ' + (UI.withRejected ? '(반려 포함)' : '(반려 뺌)') + '</p></div>';
+
+    h += '<div class="cards">' +
+      card('응답 수', D.responses.length, '명', '승인 ' + cnt.approved + ' · 대기 ' + cnt.pending + ' · 반려 ' + cnt.rejected) +
+      card('평균 만족도', sats.length ? avg(sats) : '-', '/ 5', sats.length + '명 기준') +
+      card('등급 오른 비율', mv ? pct(up, mv) : '-', '%', mv + '명 기준 · ' + (UI.base === '6' ? '6모' : '9모(없으면 6모)') + ' → 수능') + '</div>';
+
+    // 등급 변화
+    h += '<div class="panel"><h3>등급 변화 <small>출발 → 수능 가채점</small></h3><div class="toolbar">' +
+      '<span class="lbl">출발 성적</span>' + chipGroup('base', [['9', '9모 기준 (없으면 6모)'], ['6', '6모 기준']]) + '</div>';
+    if (!mv) h += '<p class="muted">두 시험 등급이 모두 있는 응답이 아직 없습니다.</p>';
+    else {
+      h += '<div class="bars">' + barRow('상승', up, mv, 'ok') + barRow('유지', same, mv, 'gray') + barRow('하락', down, mv, '') + '</div>';
+      var M = {}; moves.forEach(function (m) { var k = m[0] + '_' + m[1]; M[k] = (M[k] || 0) + 1; });
+      var t = '<div class="wrap" style="margin-top:14px"><table class="mx"><tr><th>출발 \\ 수능</th>';
+      for (var j = 1; j <= 9; j++) t += '<th>' + j + '등급</th>';
+      t += '</tr>';
+      for (var i = 1; i <= 9; i++) {
+        var any = false; for (j = 1; j <= 9; j++) if (M[i + '_' + j]) any = true;
+        if (!any) continue;
+        t += '<tr><th>' + i + '등급</th>';
+        for (j = 1; j <= 9; j++) { var n = M[i + '_' + j] || 0; t += '<td class="' + (n ? (j < i ? 'up' : j === i ? 'same' : 'down') : 'z') + '">' + (n || '·') + '</td>'; }
+        t += '</tr>';
+      }
+      h += t + '</table></div>';
+      var top = Object.keys(M).map(function (k) { var p = k.split('_'); return [Number(p[0]), Number(p[1]), M[k]]; })
+        .sort(function (a, b) { return b[2] - a[2] || a[0] - b[0]; });
+      h += '<p class="small" style="margin-top:12px;line-height:1.9">' + top.map(function (x) {
+        return '<span class="badge ' + (x[1] < x[0] ? 'b-ok' : x[1] === x[0] ? 'b-no' : 'b-warn') + '">' + x[0] + '등급→' + x[1] + '등급 ' + x[2] + '명</span>';
+      }).join(' ') + '</p>';
+    }
+    h += '</div>';
+
+    // 평균 원점수 추이
+    h += '<div class="panel"><h3>평균 원점수 <small>6모 → 9모 → 수능 · 원점수 넣은 응답만</small></h3><div class="trend">';
+    ['hwa', 'eon'].forEach(function (sj) {
+      if (UI.fSubj !== 'all' && UI.fSubj !== sj) return;
+      var sub = rs.filter(function (r) { return r.subject === sj; });
+      h += '<div class="box"><b>' + SUBJ[sj] + '</b> <span class="small muted">' + sub.length + '명</span><div class="steps">';
+      EXAMS.forEach(function (e, i) {
+        var vals = sub.map(function (r) { return r[e[0] + '_raw']; }).filter(function (x) { return x != null; });
+        h += (i ? '<div class="arr">→</div>' : '') + '<div class="st"><b>' + (vals.length ? avg(vals) : '-') + '</b><span>' + e[1] + '</span><span>' + vals.length + '명 기준</span></div>';
+      });
+      h += '</div></div>';
+    });
+    h += '</div></div>';
+
+    // 만족도 분포 · 도움된 부분
+    h += '<div class="trend"><div class="panel"><h3>만족도 <small>' + sats.length + '명</small></h3><div class="bars">';
+    for (var s = 5; s >= 1; s--) { var c = sats.filter(function (x) { return x === s; }).length; h += barRow(s + '점', c, sats.length, s >= 4 ? '' : 'gray'); }
+    h += '</div></div><div class="panel"><h3>도움된 부분 <small>여러 개 고름 · ' + rs.length + '명</small></h3><div class="bars">';
+    var hc = {}; rs.forEach(function (r) { (r.helpful || []).forEach(function (x) { hc[x] = (hc[x] || 0) + 1; }); });
+    Object.keys(hc).sort(function (a, b) { return hc[b] - hc[a]; }).forEach(function (k, i) { h += barRow((i + 1) + '. ' + k, hc[k], rs.length, ''); });
+    if (!Object.keys(hc).length) h += '<p class="muted">아직 없습니다.</p>';
+    h += '</div></div></div>';
+
+    v.innerHTML = h;
+    v.querySelectorAll('[data-f]').forEach(function (b) { b.onclick = function () { UI[b.getAttribute('data-f')] = b.getAttribute('data-v'); render(); }; });
+    $('withrj').onchange = function () { UI.withRejected = this.checked; render(); };
+    $('xl').onclick = exportAll;
+  }
+  function barRow(label, n, total, cls) {
+    var p = pct(n, total);
+    return '<div class="row"><span>' + esc(label) + '</span><div class="track"><div class="fill ' + (cls || '') + '" style="width:' + p + '%"></div></div><span class="n">' + n + '명 · ' + p + '%</span></div>';
+  }
+  function exportAll() {
+    var head = ['번호', '이름', '휴대폰', '상태', '강의', '시작 시점', '선택 과목'];
+    EXAMS.forEach(function (e) { head.push(e[1] + ' 원점수', e[1] + ' 등급', e[1] + ' 등급 방식'); });
+    head = head.concat(['만족도', '도움된 부분', '수강 후기', '종현샘께 한마디', '제출 시각', '승인 시각', '기프티콘', '문자 안내']);
+    var ST = { pending: '승인 대기', approved: '승인', rejected: '반려' };
+    var rows = D.responses.map(function (r) {
+      var row = [r.id, r.name, r.phone ? fmtPhone(r.phone) : '(삭제됨)', ST[r.status], (r.courses || []).map(function (c) { return COURSE[c]; }).join('·'),
+        START[r.start_when] || '', SUBJ[r.subject] || ''];
+      EXAMS.forEach(function (e) {
+        var x = gradeOf(r, e[0]), st = r[e[0] + '_status'];
+        row.push(r[e[0] + '_raw'] != null ? r[e[0] + '_raw'] : (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : ''));
+        row.push(x.g != null ? x.g : '');
+        row.push(x.how === 'score' ? (x.g ? '점수 환산' : '컷 없음') : x.how === 'self' ? '직접 입력' : '');
+      });
+      var g = giftOf(r.id);
+      row.push(r.satisfaction || '', (r.helpful || []).join(', '), r.review || '', r.message || '',
+        r.created_at ? new Date(r.created_at).toLocaleString('ko-KR') : '', r.approved_at ? new Date(r.approved_at).toLocaleString('ko-KR') : '',
+        g ? (g.label || '#' + g.id) : '', r.notified_at ? '완료' : '');
+      return row;
+    });
+    var ws = XLSX.utils.aoa_to_sheet([head].concat(rows));
+    var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '전체 응답');
+    var cut = [['시험', '과목', '1', '2', '3', '4', '5', '6', '7', '8']];
+    EXAMS.forEach(function (e) { ['hwa', 'eon'].forEach(function (s) { cut.push([e[1], SUBJ[s]].concat((D.settings.cuts[e[0]] || {})[s] || [])); }); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cut), '등급컷');
+    XLSX.writeFile(wb, '수능조사_전체응답_' + stamp() + '.xlsx');
+  }
+
+  /* ============ 후기 · 한마디 ============ */
+  function vReviews(v) {
+    var rs = D.responses.filter(function (r) { return r.review && r.status !== 'rejected'; }).sort(function (a, b) { return b.id - a.id; });
+    var h = '<div class="panel"><h3>수강 후기 <small>' + rs.length + '개 · 이름을 가려 표시 (설명회용) · 반려 응답 뺌</small></h3>';
+    if (!rs.length) h += '<p class="muted">아직 후기가 없습니다.</p>';
+    rs.forEach(function (r) {
+      h += '<div class="rv"><span class="who">' + esc(mask(r.name)) + '</span><span class="meta">' +
+        (r.courses || []).map(function (c) { return COURSE[c]; }).join('·') + (r.subject ? ' · ' + SUBJ_S[r.subject] : '') + (r.satisfaction ? ' · 만족도 ' + r.satisfaction + '점' : '') +
+        '</span><p>' + esc(r.review) + '</p></div>';
+    });
+    v.innerHTML = h + '</div>';
+  }
+  function vMessages(v) {
+    var rs = D.responses.filter(function (r) { return r.message; }).sort(function (a, b) { return b.id - a.id; });
+    var h = '<div class="panel"><h3>종현샘께 한마디 <small>' + rs.length + '개 · 내부용 (설명회 자료에 쓰지 않음)</small></h3>';
+    if (!rs.length) h += '<p class="muted">아직 없습니다.</p>';
+    rs.forEach(function (r) {
+      var g = gradeOf(r, 'sn');
+      h += '<div class="rv"><span class="who">' + esc(r.name) + '</span><span class="meta">' +
+        (r.courses || []).map(function (c) { return COURSE[c]; }).join('·') + ' · 수능 가채점 ' + (g.g ? g.g + '등급' : g.raw != null ? '컷 없음' : '-') +
+        (g.raw != null ? ' (' + g.raw + '점)' : '') + (r.status === 'rejected' ? ' · 반려' : '') + '</span><p>' + esc(r.message) + '</p></div>';
+    });
+    v.innerHTML = h + '</div>';
+  }
+
+  /* ============ 기프티콘 ============ */
+  function vGifts(v) {
+    var s = stock();
+    var h = '<div class="cards">' + card('전체', s.total, '장') + card('남음', s.left, '장', '', s.left === 0) + card('지급됨', s.given, '장') + '</div>';
+    h += '<div class="panel"><h3>기프티콘 등록 <small>바코드가 서로 다른 이미지를 한 장씩 · 여러 장 한 번에</small></h3>' +
+      '<div class="drop" id="drop">이미지를 여기로 끌어 놓거나 <button class="mini red" id="pick">이미지 고르기</button>' +
+      '<input type="file" id="gfile" accept="image/*" multiple hidden><div id="upmsg" class="small" style="margin-top:8px"></div></div></div>';
+    h += '<div class="panel"><h3>목록 <small>먼저 올린 것부터 나갑니다</small></h3><div class="giftgrid">';
+    D.gifts.slice().reverse().forEach(function (g) {
+      var st = g.response_id ? '지급됨 → ' + esc(g.to_name || '') + ' <span class="small muted">' + fmtTime(g.assigned_at) + '</span>'
+        : g.retired ? '<span class="muted">쓰지 않음(응답 삭제됨)</span>' : '<span style="color:var(--ok)">남음</span>';
+      h += '<div class="gift"><div class="gl">#' + g.id + ' · ' + esc(g.label) + '</div><div class="gs">' + st + '</div>' +
+        '<button class="mini" data-gv="' + g.id + '">보기</button> ' +
+        (!g.response_id ? '<button class="mini danger" data-gd="' + g.id + '">지우기</button>' : '') + '</div>';
+    });
+    if (!D.gifts.length) h += '<p class="muted">아직 없습니다.</p>';
+    v.innerHTML = h + '</div></div>';
+
+    var inp = $('gfile'), drop = $('drop');
+    $('pick').onclick = function () { inp.click(); };
+    inp.onchange = function () { uploadGifts(Array.prototype.slice.call(inp.files)); inp.value = ''; };
+    drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('on'); });
+    drop.addEventListener('dragleave', function () { drop.classList.remove('on'); });
+    drop.addEventListener('drop', function (e) {
+      e.preventDefault(); drop.classList.remove('on');
+      uploadGifts(Array.prototype.filter.call(e.dataTransfer.files, function (f) { return /^image\//.test(f.type); }));
+    });
+    v.querySelectorAll('[data-gv]').forEach(function (b) { b.onclick = function () { viewGift(Number(b.getAttribute('data-gv'))); }; });
+    v.querySelectorAll('[data-gd]').forEach(function (b) {
+      b.onclick = function () {
+        if (!confirm('이 기프티콘 이미지를 지울까요? (아직 안 나간 것만 지워집니다)')) return;
+        deleteGifts([Number(b.getAttribute('data-gd'))]);
+      };
+    });
+  }
+  function uploadGifts(files) {
+    if (!files.length) return;
+    var msg = $('upmsg'); msg.textContent = files.length + '장 올리는 중…';
+    return rpc('survey_admin_upload_paths', { p_token: token, p_count: files.length }).then(function (d) {
+      var done = [], fail = 0, i = 0;
+      function one() {
+        if (i >= files.length) return Promise.resolve();
+        var f = files[i], p = d.paths[i]; i++;
+        return sb.storage.from(CFG.bucket).upload(p, f, { contentType: f.type || 'image/png', upsert: false }).then(function (r) {
+          if (r.error) fail++; else done.push({ path: p, label: f.name });
+          msg.textContent = i + ' / ' + files.length + '장';
+        }).then(one);
+      }
+      return one().then(function () {
+        if (!done.length) throw new Error('올리기 실패');
+        return rpc('survey_admin_gift_register', { p_token: token, p_items: done });
+      }).then(function (r) {
+        msg.textContent = '';
+        toast(r.added + '장 등록' + (fail ? ' · 실패 ' + fail + '장' : ''));
+        return load();
+      });
+    }).catch(function (e) { msg.textContent = ''; err(e); });
+  }
+  function viewGift(id) {
+    rpc('survey_admin_gift_open', { p_token: token, p_ids: [id] }).then(function (d) {
+      return sb.storage.from(CFG.bucket).createSignedUrl(d.paths[String(id)], 120);
+    }).then(function (r) {
+      if (r.error) throw r.error;
+      modal('<img alt="기프티콘" src="' + esc(r.data.signedUrl) + '"><button class="mini" style="margin-top:10px" data-close>닫기</button>');
+    }).catch(err);
+  }
+  function deleteGifts(ids) {
+    return rpc('survey_admin_gift_delete', { p_token: token, p_ids: ids }).then(function (d) {
+      if (d.paths && d.paths.length) return sb.storage.from(CFG.bucket).remove(d.paths).then(function () { return d; });
+      return d;
+    }).then(function (d) { toast((d.paths || []).length + '장 지웠습니다'); return load(); }).catch(err);
+  }
+  function modal(html) { $('modalbox').innerHTML = html; $('modal').hidden = false; }
+  $('modal').addEventListener('click', function (e) { if (e.target.id === 'modal' || e.target.hasAttribute('data-close')) $('modal').hidden = true; });
+
+  /* ============ 명단 ============ */
+  function vRoster(v) {
+    var R = D.roster;
+    var chk = R.filter(function (r) { return /^확인 필요/.test(r.status); }).length, fail = R.filter(function (r) { return r.status === '읽기 실패'; }).length;
+    var h = '<div class="cards">' + card('명단', R.length, '명') + card('확인 필요', chk, '명') + card('읽기 실패', fail, '명') + '</div>';
+    h += '<div class="panel"><div class="toolbar"><b>명단_정리본 엑셀 다시 올리기</b><span class="small muted">열: 이름 / 휴대폰 / 출처 파일 / 상태 (/ 비고) — 올리면 지금 명단을 덮어씁니다</span><span class="sp"></span>' +
+      '<button class="mini red" id="rpick">엑셀 올리기</button><input type="file" id="rfile" accept=".xlsx,.xls,.csv" hidden>' +
+      '<button class="mini" id="rdown">지금 명단 엑셀로 받기</button></div>' +
+      '<div class="wrap"><table class="t"><thead><tr><th>이름</th><th>휴대폰</th><th>출처 파일</th><th>상태</th><th>비고</th></tr></thead><tbody>' +
+      R.map(function (r) {
+        var cls = r.status === '정상' ? 'b-ok' : r.status === '읽기 실패' ? 'b-warn' : 'b-chk';
+        return '<tr><td><b>' + esc(r.name) + '</b></td><td class="num">' + esc(fmtPhone(r.phone)) + '</td><td class="small">' + esc(r.source) + '</td><td><span class="badge ' + cls + '">' + esc(r.status) + '</span></td><td class="small muted">' + esc(r.note) + '</td></tr>';
+      }).join('') + '</tbody></table></div></div>';
+    v.innerHTML = h;
+    $('rpick').onclick = function () { $('rfile').click(); };
+    $('rfile').onchange = function () { var f = this.files[0]; this.value = ''; if (f) uploadRoster(f); };
+    $('rdown').onclick = function () {
+      var aoa = [['이름', '휴대폰', '출처 파일', '상태', '비고']].concat(R.map(function (r) { return [r.name, fmtPhone(r.phone), r.source, r.status, r.note]; }));
+      var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '명단');
+      XLSX.writeFile(wb, '명단_정리본.xlsx');
+    };
+  }
+  function uploadRoster(file) {
+    file.arrayBuffer().then(function (buf) {
+      var wb = XLSX.read(buf, { type: 'array' });
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '', raw: false });
+      var hi = -1, col = {};
+      for (var i = 0; i < Math.min(rows.length, 10); i++) {
+        var r = rows[i].map(function (x) { return String(x).replace(/\s/g, ''); });
+        if (r.indexOf('이름') >= 0) {
+          hi = i;
+          col.name = r.indexOf('이름');
+          col.phone = r.findIndex(function (x) { return /휴대폰|번호|전화/.test(x); });
+          col.source = r.findIndex(function (x) { return /출처/.test(x); });
+          col.status = r.findIndex(function (x) { return /상태/.test(x); });
+          col.note = r.findIndex(function (x) { return /비고/.test(x); });
+          break;
+        }
+      }
+      if (hi < 0 || col.phone < 0) throw new Error('첫 줄에 「이름」「휴대폰」 열이 있어야 합니다');
+      var out = rows.slice(hi + 1).map(function (r) {
+        var g = function (k) { return col[k] >= 0 ? String(r[col[k]] || '').trim() : ''; };
+        return { name: g('name'), phone: digits(g('phone')), source: g('source') || file.name, status: g('status') || '정상', note: g('note') };
+      }).filter(function (x) { return x.name || x.phone; });
+      if (!out.length) throw new Error('읽은 줄이 없습니다');
+      if (!confirm('지금 명단(' + D.roster.length + '명)을 지우고 엑셀의 ' + out.length + '명으로 덮어쓸까요?')) return;
+      return rpc('survey_admin_set_roster', { p_token: token, p_rows: out, p_replace: true }).then(function (d) { toast('명단 ' + d.count + '명으로 바꿨습니다'); return load(); });
+    }).catch(err);
+  }
+
+  /* ============ 등급컷 ============ */
+  function vCuts(v) {
+    var C = D.settings.cuts || {};
+    var h = '<div class="panel"><h3>등급컷 <small>원점수 · 그 점수 이상이면 그 등급 · 8등급 컷 미만은 9등급 · 빈칸이면 그 아래는 「컷 없음」</small></h3><div class="cutgrid">';
+    EXAMS.forEach(function (e) {
+      h += '<div><b>' + e[1] + '</b><table><tr><th></th>';
+      for (var i = 1; i <= 8; i++) h += '<th>' + i + '</th>';
+      h += '</tr>';
+      ['hwa', 'eon'].forEach(function (s) {
+        var arr = (C[e[0]] || {})[s] || [];
+        h += '<tr><th>' + SUBJ_S[s] + '</th>';
+        for (var i = 0; i < 8; i++) {
+          var x = arr[i];
+          h += '<td><input data-c="' + e[0] + '.' + s + '.' + i + '" inputmode="numeric" value="' + (x == null ? '' : x) + '"' + (x == null ? ' class="empty"' : '') + '></td>';
+        }
+        h += '</tr>';
+      });
+      h += '</table></div>';
+    });
+    h += '</div><div class="toolbar" style="margin-top:16px"><button class="mini red" id="cutsave">저장 (전체 다시 계산)</button><span class="small muted">저장하면 승인·통계·엑셀의 등급이 바로 새 컷으로 바뀝니다.</span></div></div>';
+    v.innerHTML = h;
+    $('cutsave').onclick = function () {
+      var out = {}, bad = false;
+      v.querySelectorAll('[data-c]').forEach(function (inp) {
+        var k = inp.getAttribute('data-c').split('.'), val = inp.value.trim();
+        out[k[0]] = out[k[0]] || {}; out[k[0]][k[1]] = out[k[0]][k[1]] || [];
+        var n = val === '' ? null : Number(val);
+        if (n != null && !(n >= 0 && n <= 100)) bad = true;
+        out[k[0]][k[1]][Number(k[2])] = n;
+      });
+      if (bad) return toast('0~100 사이 숫자만 넣어 주세요');
+      rpc('survey_admin_set_cuts', { p_token: token, p_cuts: out }).then(function () { toast('저장했습니다 · 등급을 다시 계산했습니다'); return load(); }).catch(err);
+    };
+  }
+
+  /* ============ 설정 ============ */
+  function vSettings(v) {
+    v.innerHTML = '<div class="panel"><h3>설정</h3>' +
+      '<div class="field-row"><label>기프티콘 이름</label><input id="sglabel" value="' + esc(D.settings.gift_label) + '" placeholder="메가커피"><span class="small muted">시작 화면 「1분 설문 · 완료하면 ○○ 기프티콘 증정」</span></div>' +
+      '<div class="field-row"><label>설문 주소</label><input id="surl" value="' + esc(D.settings.survey_url) + '" placeholder="' + esc(surveyUrl()) + '"><span class="small muted">문자 안내 문구에 들어갑니다 (비우면 지금 주소)</span></div>' +
+      '<div class="field-row"><label>새 비밀번호</label><input id="snpw" type="password" placeholder="바꿀 때만 · 8자 이상"><span class="small muted">바꾸면 모든 로그인이 끊깁니다</span></div>' +
+      '<div class="toolbar"><button class="mini red" id="ssave">저장</button><button class="mini" id="slogout">로그아웃</button></div></div>';
+    $('ssave').onclick = function () {
+      var np = $('snpw').value;
+      if (np && np.length < 8) return toast('비밀번호는 8자 이상');
+      rpc('survey_admin_set_settings', { p_token: token, p: { gift_label: $('sglabel').value, survey_url: $('surl').value.trim(), new_password: np } })
+        .then(function () { if (np) { toast('비밀번호를 바꿨습니다. 다시 로그인해 주세요'); return logout(); } toast('저장했습니다'); return load(); }).catch(err);
+    };
+    $('slogout').onclick = logout;
+  }
+
+  /* ---------- 시작 ---------- */
+  if (token) { $('main').hidden = false; load(); } else showLogin();
+})();
