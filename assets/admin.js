@@ -8,7 +8,7 @@
   var token = sessionStorage.getItem(TK) || '';
   var D = null;                       // survey_admin_data 결과
   var tab = 'approve';
-  var UI = { list: 'pending', base: '9', fCourse: 'all', fSubj: 'all', fStart: 'all', withRejected: false };
+  var UI = { list: 'pending', base: 'pre', fCourse: 'all', fSubj: 'all', fStart: 'all', withRejected: false };
 
   var EXAMS = [['m6', '6월 모평'], ['m9', '9월 모평'], ['sn', '수능 가채점']];
   var SUBJ = { hwa: '화법과 작문', eon: '언어와 매체' };
@@ -102,21 +102,31 @@
     var st = r[exam + '_status'];
     return '<span class="muted">' + (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : '-') + '</span>';
   }
-  // 승인 목록 「점수 추이」: 6모 3 → 9모 3 → 수능 2  (아래 작게 원점수 · 과목, 출발 대비 ▲▼=)
+  // 수강 전 점수: 학생이 고른 등급(원점수는 참고). 없거나 「기억 안 남」이면 6·9모 중 낮은(숫자 큰) 등급을 대신 쓴다.
+  function preOf(r) {
+    if (r.pre_grade != null) return { g: r.pre_grade, raw: r.pre_raw, how: 'self' };
+    var a = gradeOf(r, 'm6').g, b = gradeOf(r, 'm9').g;
+    var g = a == null ? b : b == null ? a : Math.max(a, b);
+    if (g != null) return { g: g, raw: null, how: 'fallback', forgot: r.pre_status === 'forgot' };
+    return { g: null, raw: null, how: null, forgot: r.pre_status === 'forgot' };
+  }
+  function deltaHtml(st, sn) {
+    if (st == null || sn == null) return '';
+    var n = st - sn;
+    return n > 0 ? '<span class="dl up">▲' + n + '</span>' : n < 0 ? '<span class="dl down">▼' + (-n) + '</span>' : '<span class="dl same">=</span>';
+  }
+  // 승인 목록 「점수 추이」: 수강 전 4 → 6모 3 → 9모 3 → 수능 2  (아래 작게 원점수 · 과목, 수강 전 대비 ▲▼=)
   function trendCell(r) {
-    var top = [], raw = [];
+    var p = preOf(r);
+    var top = ['<span class="tg-l">수강 전</span> <b class="tg' + (p.g == null ? ' none' : '') + '">' + (p.g != null ? p.g : '—') + '</b>'];
+    var raw = [p.how === 'self' ? (p.raw != null ? p.raw : '직접') : p.how === 'fallback' ? '6·9모 중 낮은 쪽' : '—'];
     EXAMS.forEach(function (e) {
       var x = gradeOf(r, e[0]);
       var gtxt = x.g != null ? String(x.g) : (x.how === 'score' ? '?' : '—');
       top.push('<span class="tg-l">' + { m6: '6모', m9: '9모', sn: '수능' }[e[0]] + '</span> <b class="tg' + (x.g == null ? ' none' : '') + '"' + (x.nocut ? ' title="등급컷 비어 있음"' : '') + '>' + gtxt + '</b>');
       raw.push(x.how === 'score' ? x.raw : x.how === 'self' ? '직접' : '—');
     });
-    var g9 = gradeOf(r, 'm9').g, st = g9 != null ? g9 : gradeOf(r, 'm6').g, sn = gradeOf(r, 'sn').g, d = '';
-    if (st != null && sn != null) {
-      var n = st - sn;
-      d = n > 0 ? '<span class="dl up">▲' + n + '</span>' : n < 0 ? '<span class="dl down">▼' + (-n) + '</span>' : '<span class="dl same">=</span>';
-    }
-    return '<div class="trend-row">' + top.join(' <span class="tg-a">→</span> ') + ' ' + d + '</div>' +
+    return '<div class="trend-row">' + top.join(' <span class="tg-a">→</span> ') + ' ' + deltaHtml(p.g, gradeOf(r, 'sn').g) + '</div>' +
       '<div class="trend-raw">' + raw.join(' · ') + (r.subject ? ' <span class="subj">' + SUBJ_S[r.subject] + '</span>' : '') + '</div>';
   }
   function textCell(r) {
@@ -273,16 +283,17 @@
   function openDetail(id) { UI.detail = id; renderDetail(); }
   function closeDetail() { UI.detail = null; $('detail').hidden = true; document.body.classList.remove('detail-open'); }
   function spark(r) {
-    // 등급 1(위) ~ 9(아래), 점 3개 (없는 시험은 비움)
-    var W = 240, H = 110, px = [30, 120, 210], y = function (g) { return 12 + (g - 1) * (H - 30) / 8; };
-    var pts = EXAMS.map(function (e, i) { var g = gradeOf(r, e[0]).g; return g == null ? null : [px[i], y(g), g]; });
+    // 등급 1(위) ~ 9(아래), 점 4개: 수강 전 · 6모 · 9모 · 수능 (없는 시험은 비움)
+    var W = 280, H = 110, px = [34, 114, 194, 262], y = function (g) { return 12 + (g - 1) * (H - 30) / 8; };
+    var gs = [preOf(r).g].concat(EXAMS.map(function (e) { return gradeOf(r, e[0]).g; }));
+    var pts = gs.map(function (g, i) { return g == null ? null : [px[i], y(g), g]; });
     var s = '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img" aria-label="등급 추이">';
     [1, 5, 9].forEach(function (g) { s += '<line x1="18" x2="' + (W - 8) + '" y1="' + y(g) + '" y2="' + y(g) + '" stroke="#EFEAE4"/><text x="0" y="' + (y(g) + 4) + '" font-size="10" fill="#9A948C">' + g + '</text>'; });
     var seg = pts.filter(Boolean);
     if (seg.length > 1) s += '<polyline fill="none" stroke="#A8151C" stroke-width="2.5" points="' + seg.map(function (p) { return p[0] + ',' + p[1]; }).join(' ') + '"/>';
     pts.forEach(function (p, i) {
       if (p) s += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" fill="#A8151C"/><text x="' + p[0] + '" y="' + (p[1] - 9) + '" font-size="12" font-weight="700" text-anchor="middle" fill="#2C2C2C">' + p[2] + '</text>';
-      s += '<text x="' + px[i] + '" y="' + (H - 2) + '" font-size="11" text-anchor="middle" fill="#6E675E">' + ['6모', '9모', '수능'][i] + (p ? '' : ' —') + '</text>';
+      s += '<text x="' + px[i] + '" y="' + (H - 2) + '" font-size="11" text-anchor="middle" fill="#6E675E">' + ['수강 전', '6모', '9모', '수능'][i] + (p ? '' : ' —') + '</text>';
     });
     return s + '</svg>';
   }
@@ -291,6 +302,13 @@
     if (x.how === 'score') return x.raw + '점 → ' + (x.g ? x.g + '등급' : '컷 없음') + ' <span class="how">점수 환산</span>';
     if (x.how === 'self') return x.g + '등급 <span class="how">직접 입력</span>';
     return '<span class="muted">' + (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : '입력 없음') + '</span>';
+  }
+  function preLine(r) {
+    var p = preOf(r);
+    if (p.how === 'self') return p.g + '등급 <span class="how">직접 입력</span>' + (p.raw != null ? ' · 원점수 ' + p.raw + '점' : '');
+    var why = r.pre_status === 'forgot' ? '기억 안 남' : '입력 없음(예전 화면)';
+    if (p.how === 'fallback') return p.g + '등급 <span class="how">6·9모 중 낮은 쪽 · ' + why + '</span>';
+    return '<span class="muted">' + why + '</span>';
   }
   function renderDetail() {
     var r = respById(UI.detail), el = $('detail');
@@ -309,7 +327,7 @@
     h += '<div class="dact">' + act + '</div>';
     h += '<section><h4>기본</h4>' + row('번호', r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + row('제출', r.created_at ? new Date(r.created_at).toLocaleString('ko-KR') : '') +
       row('강의', (r.courses || []).map(function (c) { return COURSE[c] || c; }).join(' · ') || '-') + row('시작', START[r.start_when] || '-') + row('과목', SUBJ[r.subject] || '-') + '</section>';
-    h += '<section><h4>성적</h4>' + EXAMS.map(function (e) { return row(e[1], examLine(r, e)); }).join('') +
+    h += '<section><h4>성적</h4>' + row('수강 전', preLine(r)) + EXAMS.map(function (e) { return row(e[1], examLine(r, e)); }).join('') +
       '<div class="dspark">' + spark(r) + '</div>' + '<div class="dtrend">' + trendCell(r) + '</div></section>';
     h += '<section><h4>만족도 · 도움된 부분</h4>' + row('만족도', r.satisfaction ? r.satisfaction + '점 / 5' : '-') +
       row('도움', (r.helpful || []).length ? (r.helpful || []).map(function (x) { return '<span class="badge b-no">' + esc(x) + '</span>'; }).join(' ') : '-') + '</section>';
@@ -373,7 +391,9 @@
       return true;
     });
   }
+  var BASE_LABEL = { pre: '수강 전', '9': '9모(없으면 6모)', '6': '6모' };
   function startGrade(r) {
+    if (UI.base === 'pre') return preOf(r).g;
     if (UI.base === '6') return gradeOf(r, 'm6').g;
     var g9 = gradeOf(r, 'm9').g;
     return g9 != null ? g9 : gradeOf(r, 'm6').g;
@@ -406,11 +426,13 @@
     h += '<div class="cards">' +
       card('응답 수', D.responses.length, '명', '승인 ' + cnt.approved + ' · 대기 ' + cnt.pending + ' · 반려 ' + cnt.rejected) +
       card('평균 만족도', sats.length ? avg(sats) : '-', '/ 5', sats.length + '명 기준') +
-      card('등급 오른 비율', mv ? pct(up, mv) : '-', '%', mv + '명 기준 · ' + (UI.base === '6' ? '6모' : '9모(없으면 6모)') + ' → 수능') + '</div>';
+      card('등급 오른 비율', mv ? pct(up, mv) : '-', '%', mv + '명 기준 · ' + BASE_LABEL[UI.base] + ' → 수능') + '</div>';
 
     // 등급 변화
-    h += '<div class="panel"><h3>등급 변화 <small>출발 → 수능 가채점</small></h3><div class="toolbar">' +
-      '<span class="lbl">출발 성적</span>' + chipGroup('base', [['9', '9모 기준 (없으면 6모)'], ['6', '6모 기준']]) + '</div>';
+    var fb = UI.base === 'pre' ? rs.filter(function (r) { return preOf(r).how === 'fallback' && gradeOf(r, 'sn').g != null; }).length : 0;
+    h += '<div class="panel"><h3>등급 변화 <small>' + BASE_LABEL[UI.base] + ' → 수능 가채점</small></h3><div class="toolbar">' +
+      '<span class="lbl">출발 성적</span>' + chipGroup('base', [['pre', '수강 전 기준'], ['9', '9모 기준 (없으면 6모)'], ['6', '6모 기준']]) +
+      (fb ? '<span class="small muted">수강 전 점수가 없는 ' + fb + '명은 6·9모 중 낮은 쪽으로 셈</span>' : '') + '</div>';
     if (!mv) h += '<p class="muted">두 시험 등급이 모두 있는 응답이 아직 없습니다.</p>';
     else {
       h += '<div class="bars">' + barRow('상승', up, mv, 'ok') + barRow('유지', same, mv, 'gray') + barRow('하락', down, mv, '') + '</div>';
@@ -467,19 +489,25 @@
     return '<div class="row"><span>' + esc(label) + '</span><div class="track"><div class="fill ' + (cls || '') + '" style="width:' + p + '%"></div></div><span class="n">' + n + '명 · ' + p + '%</span></div>';
   }
   function exportAll() {
-    var head = ['번호', '이름', '휴대폰', '상태', '강의', '시작 시점', '선택 과목'];
+    var head = ['번호', '이름', '휴대폰', '상태', '강의', '시작 시점', '선택 과목', '수강 전 원점수', '수강 전 등급', '수강 전 등급 방식'];
     EXAMS.forEach(function (e) { head.push(e[1] + ' 원점수', e[1] + ' 등급', e[1] + ' 등급 방식'); });
+    head.push('수강 전→수능 변화');
     head = head.concat(['만족도', '도움된 부분', '수강 후기', '종현샘께 한마디', '제출 시각', '승인 시각', '기프티콘', '문자 안내']);
     var ST = { pending: '승인 대기', approved: '승인', rejected: '반려' };
     var rows = D.responses.map(function (r) {
       var row = [r.id, r.name, r.phone ? fmtPhone(r.phone) : '(삭제됨)', ST[r.status], (r.courses || []).map(function (c) { return COURSE[c]; }).join('·'),
         START[r.start_when] || '', SUBJ[r.subject] || ''];
+      var p = preOf(r);
+      row.push(r.pre_raw != null ? r.pre_raw : (r.pre_status === 'forgot' ? '기억 안 남' : ''), p.g != null ? p.g : '',
+        p.how === 'self' ? '직접 입력' : p.how === 'fallback' ? '6·9모 중 낮은 쪽' : '');
       EXAMS.forEach(function (e) {
         var x = gradeOf(r, e[0]), st = r[e[0] + '_status'];
         row.push(r[e[0] + '_raw'] != null ? r[e[0] + '_raw'] : (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : ''));
         row.push(x.g != null ? x.g : '');
         row.push(x.how === 'score' ? (x.g ? '점수 환산' : '컷 없음') : x.how === 'self' ? '직접 입력' : '');
       });
+      var sg = gradeOf(r, 'sn').g;
+      row.push(p.g != null && sg != null ? (p.g - sg > 0 ? '▲' + (p.g - sg) : p.g - sg < 0 ? '▼' + (sg - p.g) : '=') : '');
       var g = giftOf(r.id);
       row.push(r.satisfaction || '', (r.helpful || []).join(', '), r.review || '', r.message || '',
         r.created_at ? new Date(r.created_at).toLocaleString('ko-KR') : '', r.approved_at ? new Date(r.approved_at).toLocaleString('ko-KR') : '',
