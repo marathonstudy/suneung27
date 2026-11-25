@@ -131,9 +131,13 @@
       '<div class="trend-raw">' + raw.join(' · ') + (r.subject ? ' <span class="subj">' + SUBJ_S[r.subject] + '</span>' : '') + '</div>';
   }
   function textCell(r) {
-    var h = r.review ? '<div class="rv-full">' + esc(r.review) + '</div>' : '<span class="muted small">후기 없음</span>';
-    if (r.message) h += '<div class="msg-full"><span class="msg-lab">한마디</span>' + esc(r.message) + '</div>';
+    var h = r.review ? '<div class="rv-full">' + esc(r.review) + laterTag(r.review_added_at) + '</div>' : '<span class="muted small">후기 없음</span>';
+    if (r.message) h += '<div class="msg-full"><span class="msg-lab">한마디</span>' + esc(r.message) + laterTag(r.message_added_at) + '</div>';
     return h;
+  }
+  // 제출 뒤 「기프티콘 확인」 화면에서 나중에 남긴 글
+  function laterTag(t) {
+    return t ? ' <span class="later-tag" title="' + esc(new Date(t).toLocaleString('ko-KR')) + '">나중에 추가</span>' : '';
   }
   function scoreCount(r) {
     var n = 0;
@@ -332,8 +336,8 @@
       '<div class="dspark">' + spark(r) + '</div>' + '<div class="dtrend">' + trendCell(r) + '</div></section>';
     h += '<section><h4>만족도 · 도움된 부분</h4>' + row('만족도', r.satisfaction ? r.satisfaction + '점 / 5' : '-') +
       row('도움', (r.helpful || []).length ? (r.helpful || []).map(function (x) { return '<span class="badge b-no">' + esc(x) + '</span>'; }).join(' ') : '-') + '</section>';
-    h += '<section><h4>수강 후기</h4><div class="dtext">' + (r.review ? esc(r.review) : '<span class="muted">없음</span>') + '</div></section>';
-    h += '<section><h4>종현샘께 한마디</h4><div class="dtext">' + (r.message ? esc(r.message) : '<span class="muted">없음</span>') + '</div></section>';
+    h += '<section><h4>수강 후기' + laterTag(r.review_added_at) + '</h4><div class="dtext">' + (r.review ? esc(r.review) : '<span class="muted">없음</span>') + '</div></section>';
+    h += '<section><h4>종현샘께 한마디' + laterTag(r.message_added_at) + '</h4><div class="dtext">' + (r.message ? esc(r.message) : '<span class="muted">없음</span>') + '</div></section>';
     h += '<section><h4>명단 대조</h4><div>' + b.html + '</div>' +
       (rosterRows.length ? rosterRows.map(function (x) {
         return '<div class="droster"><b>' + esc(x.name) + '</b> ' + esc(fmtPhone(x.phone)) + ' <span class="badge ' + (x.status === '정상' ? 'b-ok' : 'b-chk') + '">' + esc(x.status) + '</span>' +
@@ -531,7 +535,7 @@
     rs.forEach(function (r) {
       h += '<div class="rv"><span class="who">' + esc(mask(r.name)) + '</span><span class="meta">' +
         (r.courses || []).map(function (c) { return COURSE[c]; }).join('·') + (r.subject ? ' · ' + SUBJ_S[r.subject] : '') + (r.satisfaction ? ' · 만족도 ' + r.satisfaction + '점' : '') +
-        '</span><p>' + esc(r.review) + '</p></div>';
+        laterTag(r.review_added_at) + '</span><p>' + esc(r.review) + '</p></div>';
     });
     v.innerHTML = h + '</div>';
   }
@@ -543,7 +547,7 @@
       var g = gradeOf(r, 'sn');
       h += '<div class="rv"><span class="who">' + esc(r.name) + '</span><span class="meta">' +
         (r.courses || []).map(function (c) { return COURSE[c]; }).join('·') + ' · 수능 가채점 ' + (g.g ? g.g + '등급' : g.raw != null ? '컷 없음' : '-') +
-        (g.raw != null ? ' (' + g.raw + '점)' : '') + (r.status === 'rejected' ? ' · 반려' : '') + '</span><p>' + esc(r.message) + '</p></div>';
+        (g.raw != null ? ' (' + g.raw + '점)' : '') + (r.status === 'rejected' ? ' · 반려' : '') + laterTag(r.message_added_at) + '</span><p>' + esc(r.message) + '</p></div>';
     });
     v.innerHTML = h + '</div>';
   }

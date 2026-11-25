@@ -325,6 +325,39 @@
     var ph = document.getElementById('gph');
     ph.addEventListener('input', function () { ph.value = fmtPhone(ph.value); });
   }
+  /* ---------- 제출 뒤 후기·한마디 남기기 (비어 있는 칸만) ---------- */
+  function laterBox(res, d, nm, ph) {
+    if (!d || (!d.need_review && !d.need_message)) return;
+    var h = '<div class="later" id="later">';
+    if (d.need_review) {
+      h += '<h3 class="later-t">마라톤 하면서<br>가장 기억에 남는 건?</h3>' +
+        '<p class="q-sub">점수와 상관없이, 솔직한 이야기가 후배들에게 가장 큰 도움이 됩니다.</p>' +
+        '<div class="leads">' + LEADS.map(function (l, i) { return '<button class="lead" data-act="lead" data-t="lrv" data-i="' + i + '">' + esc(l.trim()) + '</button>'; }).join('') + '</div>' +
+        '<textarea class="inp" id="lrv" maxlength="2000" placeholder="예) 처음엔 귀찮았는데 어느 순간 지문 읽는 게 편해졌어요"></textarea>' +
+        '<p class="hint">남긴 후기는 이름을 가려 소개될 수 있습니다.</p>';
+    }
+    if (d.need_message) {
+      h += '<h3 class="later-t"' + (d.need_review ? ' style="margin-top:22px"' : '') + '>종현샘께 한마디</h3>' +
+        '<p class="q-sub">종현샘이 직접 읽어봅니다!</p>' +
+        '<textarea class="inp" id="lmsg" maxlength="2000" placeholder="자유롭게 적어 주세요"></textarea>';
+    }
+    h += '<div class="err" id="lerr"></div><button class="btn" id="lbtn" style="margin-top:12px">남기기</button></div>';
+    res.insertAdjacentHTML('beforeend', h);
+    document.getElementById('lbtn').onclick = function () {
+      var b = this, rv = document.getElementById('lrv'), mg = document.getElementById('lmsg');
+      var rvT = rv ? cleanReview(rv.value) : '', mgT = mg ? mg.value.trim() : '';
+      var err = document.getElementById('lerr');
+      if (!rvT && !mgT) { err.textContent = '내용을 적어 주세요.'; return; }
+      err.textContent = ''; b.disabled = true; b.innerHTML = '<span class="spin"></span> 보내는 중';
+      rpc('survey_add_review', { p_name: nm, p_phone: ph, p_review: rvT, p_message: mgT }).then(function (r) {
+        if (!r || !r.ok) throw new Error('fail');
+        document.getElementById('later').innerHTML = '<div class="notice"><b>고마워요! 잘 읽어볼게요</b></div>';
+      }).catch(function () {
+        err.textContent = '보내지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+        b.disabled = false; b.textContent = '남기기';
+      });
+    };
+  }
   function giftCheck() {
     var nm = document.getElementById('gnm').value.trim(), ph = digits(document.getElementById('gph').value);
     var res = document.getElementById('gres'), btn = document.getElementById('gbtn');
@@ -338,12 +371,14 @@
           res.innerHTML = '<img class="gift-img" alt="기프티콘" src="' + esc(r.data.signedUrl) + '">' +
             '<p class="save-hint">길게 눌러 저장하세요</p>' +
             '<p class="hint" style="text-align:center">이 화면은 잠깐만 열려요. 지금 저장해 두세요.</p>';
+          laterBox(res, d, nm, ph);
         });
       }
       if (st === 'pending') res.innerHTML = '<div class="notice gray"><b>확인 중입니다.</b>조금만 기다려 주세요.</div>';
       else if (st === 'rejected') res.innerHTML = '<div class="notice"><b>카카오 채널로 문의해 주세요</b>확인이 더 필요해요.</div>' +
         '<a class="btn soft" style="margin-top:12px;text-align:center;text-decoration:none;line-height:30px" href="' + esc(CFG.kakao) + '" target="_blank" rel="noopener">카카오 채널 문의하기</a>';
       else res.innerHTML = '<div class="notice gray"><b>참여 기록이 없어요.</b>이름과 번호를 다시 확인해 주세요.</div>';
+      if (st === 'pending' || st === 'rejected') laterBox(res, d, nm, ph);
     }).catch(function () {
       res.innerHTML = '<p class="err">불러오지 못했어요. 잠시 뒤 다시 눌러 주세요.</p>';
     }).then(function () { btn.disabled = false; btn.textContent = '확인하기'; });
@@ -385,10 +420,10 @@
       case 'skip': A[k] = ''; return next();
       case 'snsubmit': A.sn_raw = document.getElementById('raw').value; return submit();
       case 'lead':   // 말머리만 넣고 커서를 뒤에
-        var tx = document.getElementById('tx'), lead = LEADS[Number(b.getAttribute('data-i'))];
+        var tx = document.getElementById(b.getAttribute('data-t') || 'tx'), lead = LEADS[Number(b.getAttribute('data-i'))];
         var cur = tx.value.replace(/\s+$/, '');
         tx.value = (cur ? cur + '\n' : '') + lead;
-        A.review = tx.value;
+        if (tx.id === 'tx') A.review = tx.value;
         tx.focus(); tx.setSelectionRange(tx.value.length, tx.value.length);
         tx.scrollTop = tx.scrollHeight;
         return;

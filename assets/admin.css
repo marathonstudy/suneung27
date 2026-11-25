@@ -119,6 +119,7 @@ table.mx td.z { color: #CFC8C0; background: #fff; }
 table.t td.rvcell { min-width: 320px; max-width: 480px; white-space: pre-wrap; line-height: 1.6; }
 .rv-full { white-space: pre-wrap; }
 .msg-full { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); white-space: pre-wrap; }
+.later-tag { display: inline-block; font-size: 11px; font-weight: 700; color: #1F5FA8; background: #E8F0FA; border-radius: 6px; padding: 1px 6px; margin-left: 4px; vertical-align: 1px; white-space: nowrap; }
 .msg-lab { display: inline-block; font-size: 11px; font-weight: 800; color: var(--red-deep); background: var(--tint); border-radius: 6px; padding: 1px 6px; margin-right: 6px; vertical-align: 1px; }
 
 .qname { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: 15px; min-width: 220px; }
