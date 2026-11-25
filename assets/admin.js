@@ -62,7 +62,7 @@
   $('pw').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
 
   function load() {
-    return rpc('survey_admin_data', { p_token: token }).then(function (d) { D = d; render(); })
+    return rpc('survey_admin_data', { p_token: token }).then(function (d) { D = d; render(); if (UI.detail != null) renderDetail(); })
       .catch(function (e) { $('view').innerHTML = '<div class="panel">불러오지 못했습니다: ' + esc(e.message) + '</div>'; });
   }
   $('reload').onclick = function () { load().then(function () { toast('새로 불러왔습니다'); }); };
@@ -101,6 +101,28 @@
     if (x.how === 'self') return x.g + '등급 <span class="how">직접 입력</span>';
     var st = r[exam + '_status'];
     return '<span class="muted">' + (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : '-') + '</span>';
+  }
+  // 승인 목록 「점수 추이」: 6모 3 → 9모 3 → 수능 2  (아래 작게 원점수 · 과목, 출발 대비 ▲▼=)
+  function trendCell(r) {
+    var top = [], raw = [];
+    EXAMS.forEach(function (e) {
+      var x = gradeOf(r, e[0]);
+      var gtxt = x.g != null ? String(x.g) : (x.how === 'score' ? '?' : '—');
+      top.push('<span class="tg-l">' + { m6: '6모', m9: '9모', sn: '수능' }[e[0]] + '</span> <b class="tg' + (x.g == null ? ' none' : '') + '"' + (x.nocut ? ' title="등급컷 비어 있음"' : '') + '>' + gtxt + '</b>');
+      raw.push(x.how === 'score' ? x.raw : x.how === 'self' ? '직접' : '—');
+    });
+    var g9 = gradeOf(r, 'm9').g, st = g9 != null ? g9 : gradeOf(r, 'm6').g, sn = gradeOf(r, 'sn').g, d = '';
+    if (st != null && sn != null) {
+      var n = st - sn;
+      d = n > 0 ? '<span class="dl up">▲' + n + '</span>' : n < 0 ? '<span class="dl down">▼' + (-n) + '</span>' : '<span class="dl same">=</span>';
+    }
+    return '<div class="trend-row">' + top.join(' <span class="tg-a">→</span> ') + ' ' + d + '</div>' +
+      '<div class="trend-raw">' + raw.join(' · ') + (r.subject ? ' <span class="subj">' + SUBJ_S[r.subject] + '</span>' : '') + '</div>';
+  }
+  function textCell(r) {
+    var h = r.review ? '<div class="rv-full">' + esc(r.review) + '</div>' : '<span class="muted small">후기 없음</span>';
+    if (r.message) h += '<div class="msg-full"><span class="msg-lab">한마디</span>' + esc(r.message) + '</div>';
+    return h;
   }
   function scoreCount(r) {
     var n = 0;
@@ -177,9 +199,11 @@
       '</div>';
     var sl = smsText().length;
     h += '<p class="small muted" style="margin:-4px 0 12px">문자 안내 문구(<b style="color:' + (sl > 90 ? 'var(--red)' : 'inherit') + '">' + sl + '자' + (sl > 90 ? ' · 90자 넘음 — 설정에서 짧은 주소로 바꿔 주세요' : '') + '</b>): ' + esc(smsText()) + '</p>';
+    h += '<div class="toolbar"><input id="qname" class="qname" type="search" placeholder="이름 검색" value="' + esc(UI.q || '') + '"><span class="small muted" id="qcount"></span></div>';
+    UI.detailIds = list.map(function (r) { return r.id; });
     if (!list.length) h += '<p class="muted">해당하는 응답이 없습니다.</p>';
     else {
-      h += '<div class="wrap"><table class="t"><thead><tr><th>이름</th><th>번호</th><th>강의</th><th>점수</th><th>만족도</th><th>후기 앞부분</th><th>제출</th><th>확인</th><th></th></tr></thead><tbody>';
+      h += '<div class="wrap"><table class="t resp"><thead><tr><th>이름</th><th>번호</th><th>강의</th><th>점수 추이</th><th>만족도</th><th>후기</th><th>제출</th><th>확인</th><th></th></tr></thead><tbody>';
       list.forEach(function (r) {
         var b = badges(r), g = giftOf(r.id), act = '';
         if (r.status === 'pending') {
@@ -191,15 +215,15 @@
           act = '<span class="badge b-st-approved">승인 · ' + esc(g ? g.label || ('#' + g.id) : '') + '</span>' +
             (r.notified_at ? '<br><span class="small muted">문자 안내 완료 ' + fmtTime(r.notified_at) + '</span>' : '<br><span class="small" style="color:var(--warn)">문자 안내 전</span>');
         }
-        h += '<tr' + (r.status === 'rejected' ? ' class="dim"' : '') + '>' +
-          '<td class="nowrap"><b>' + esc(r.name) + '</b></td>' +
-          '<td class="num">' + (r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + '</td>' +
-          '<td class="nowrap">' + (r.courses || []).map(function (c) { return COURSE[c] || c; }).join('·') + '</td>' +
-          '<td class="nowrap">' + scoreCount(r) + '/3 <span class="how">' + EXAMS.map(function (e) { return gradeOf(r, e[0]).how ? e[1].slice(0, 2) : ''; }).filter(Boolean).join('·') + '</span></td>' +
-          '<td class="num">' + (r.satisfaction ? r.satisfaction + '점' : '-') + '</td>' +
-          '<td class="snip">' + esc((r.review || '').slice(0, 40)) + (r.review && r.review.length > 40 ? '…' : '') + '</td>' +
-          '<td class="num">' + fmtTime(r.created_at) + '</td>' +
-          '<td>' + b.html + '</td><td class="nowrap">' + act + '</td></tr>';
+        h += '<tr data-name="' + esc(nk(r.name)) + '"' + (r.status === 'rejected' ? ' class="dim"' : '') + '>' +
+          '<td class="nowrap c-name" data-l="이름"><button class="nm-link" data-detail="' + r.id + '" title="상세 보기">' + esc(r.name) + '</button></td>' +
+          '<td class="num" data-l="번호">' + (r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + '</td>' +
+          '<td class="nowrap" data-l="강의">' + (r.courses || []).map(function (c) { return COURSE[c] || c; }).join('·') + '</td>' +
+          '<td class="nowrap" data-l="점수 추이">' + trendCell(r) + '</td>' +
+          '<td class="num" data-l="만족도">' + (r.satisfaction ? r.satisfaction + '점' : '-') + '</td>' +
+          '<td class="rvcell" data-l="후기">' + textCell(r) + '</td>' +
+          '<td class="num" data-l="제출">' + fmtTime(r.created_at) + '</td>' +
+          '<td data-l="확인">' + b.html + '</td><td class="nowrap c-act">' + act + '</td></tr>';
       });
       h += '</tbody></table></div>';
     }
@@ -207,14 +231,11 @@
     v.innerHTML = h;
 
     v.querySelectorAll('[data-list]').forEach(function (b) { b.onclick = function () { UI.list = b.getAttribute('data-list'); render(); }; });
-    v.querySelectorAll('[data-ap]').forEach(function (b) {
-      b.onclick = function () {
-        if (b.getAttribute('data-warn') === '1' && !confirm(WARN_MSG)) return;
-        approve([Number(b.getAttribute('data-ap'))]);
-      };
-    });
-    v.querySelectorAll('[data-rj]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-rj'))], 'rejected'); }; });
-    v.querySelectorAll('[data-pd]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-pd'))], 'pending'); }; });
+    bindActs(v);
+    v.querySelectorAll('[data-detail]').forEach(function (b) { b.onclick = function () { openDetail(Number(b.getAttribute('data-detail'))); }; });
+    var q = $('qname');
+    q.oninput = function () { UI.q = q.value; applySearch(); };
+    applySearch();
     $('bulk').onclick = function () {
       if (!confirm('⚠ 없고 「명단 ✓」인 ' + bulk.length + '명을 한 번에 승인할까요?\n(기프티콘 ' + Math.min(bulk.length, s.left) + '장 배정)')) return;
       approve(bulk.map(function (r) { return r.id; }));
@@ -225,6 +246,99 @@
       rpc('survey_admin_delete_phones', { p_token: token }).then(function (d) { toast('번호 ' + d.changed + '개를 지웠습니다'); load(); }).catch(err);
     };
   }
+  // 승인 · 반려 · 대기로 버튼 (표와 상세 패널 공통 · ⚠ 확인 창 규칙 같음)
+  function bindActs(root) {
+    root.querySelectorAll('[data-ap]').forEach(function (b) {
+      b.onclick = function () {
+        if (b.getAttribute('data-warn') === '1' && !confirm(WARN_MSG)) return;
+        approve([Number(b.getAttribute('data-ap'))]);
+      };
+    });
+    root.querySelectorAll('[data-rj]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-rj'))], 'rejected'); }; });
+    root.querySelectorAll('[data-pd]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-pd'))], 'pending'); }; });
+  }
+  function qMatch(r) { var q = nk(UI.q || ''); return !q || nk(r.name).indexOf(q) >= 0; }
+  function applySearch() {
+    var q = nk(UI.q || ''), n = 0, rows = document.querySelectorAll('table.resp tbody tr');
+    rows.forEach(function (tr) { var ok = !q || tr.getAttribute('data-name').indexOf(q) >= 0; tr.hidden = !ok; if (ok) n++; });
+    var c = $('qcount'); if (c) c.textContent = q ? n + '명' : '';
+  }
+  function visibleIds() {
+    return (UI.detailIds || []).filter(function (id) { var r = respById(id); return r && qMatch(r); });
+  }
+  function respById(id) { for (var i = 0; i < D.responses.length; i++) if (D.responses[i].id === id) return D.responses[i]; return null; }
+
+  /* ---------- 학생별 상세 패널 ---------- */
+  var ST_KO = { pending: '승인 대기', approved: '승인', rejected: '반려' };
+  function openDetail(id) { UI.detail = id; renderDetail(); }
+  function closeDetail() { UI.detail = null; $('detail').hidden = true; document.body.classList.remove('detail-open'); }
+  function spark(r) {
+    // 등급 1(위) ~ 9(아래), 점 3개 (없는 시험은 비움)
+    var W = 240, H = 110, px = [30, 120, 210], y = function (g) { return 12 + (g - 1) * (H - 30) / 8; };
+    var pts = EXAMS.map(function (e, i) { var g = gradeOf(r, e[0]).g; return g == null ? null : [px[i], y(g), g]; });
+    var s = '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img" aria-label="등급 추이">';
+    [1, 5, 9].forEach(function (g) { s += '<line x1="18" x2="' + (W - 8) + '" y1="' + y(g) + '" y2="' + y(g) + '" stroke="#EFEAE4"/><text x="0" y="' + (y(g) + 4) + '" font-size="10" fill="#9A948C">' + g + '</text>'; });
+    var seg = pts.filter(Boolean);
+    if (seg.length > 1) s += '<polyline fill="none" stroke="#A8151C" stroke-width="2.5" points="' + seg.map(function (p) { return p[0] + ',' + p[1]; }).join(' ') + '"/>';
+    pts.forEach(function (p, i) {
+      if (p) s += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" fill="#A8151C"/><text x="' + p[0] + '" y="' + (p[1] - 9) + '" font-size="12" font-weight="700" text-anchor="middle" fill="#2C2C2C">' + p[2] + '</text>';
+      s += '<text x="' + px[i] + '" y="' + (H - 2) + '" font-size="11" text-anchor="middle" fill="#6E675E">' + ['6모', '9모', '수능'][i] + (p ? '' : ' —') + '</text>';
+    });
+    return s + '</svg>';
+  }
+  function examLine(r, e) {
+    var x = gradeOf(r, e[0]), st = r[e[0] + '_status'];
+    if (x.how === 'score') return x.raw + '점 → ' + (x.g ? x.g + '등급' : '컷 없음') + ' <span class="how">점수 환산</span>';
+    if (x.how === 'self') return x.g + '등급 <span class="how">직접 입력</span>';
+    return '<span class="muted">' + (st === 'none' ? '응시 안 함' : st === 'forgot' ? '기억 안 남' : '입력 없음') + '</span>';
+  }
+  function renderDetail() {
+    var r = respById(UI.detail), el = $('detail');
+    if (!r) return closeDetail();
+    var ids = visibleIds(), i = ids.indexOf(r.id), b = badges(r), g = giftOf(r.id), s = stock();
+    var rosterRows = D.roster.filter(function (x) { return x.name_key === nk(r.name); });
+    var act = r.status === 'pending'
+      ? '<button class="mini red" data-ap="' + r.id + '" data-warn="' + (b.warn ? 1 : 0) + '"' + (s.left ? '' : ' disabled title="기프티콘 재고 없음"') + '>승인</button> <button class="mini" data-rj="' + r.id + '">반려</button>' + (s.left ? '' : ' <span class="small" style="color:var(--red)">기프티콘 재고 없음</span>')
+      : r.status === 'rejected' ? '<button class="mini" data-pd="' + r.id + '">대기로</button>' : '';
+    var row = function (k, v) { return '<div class="dr"><span class="dk">' + k + '</span><span class="dv">' + v + '</span></div>'; };
+    var h = '<div class="dh"><button class="mini" data-dnav="prev"' + (i > 0 ? '' : ' disabled') + '>← 이전 학생</button>' +
+      '<span class="small muted">' + (i >= 0 ? (i + 1) + ' / ' + ids.length : '') + '</span>' +
+      '<button class="mini" data-dnav="next"' + (i >= 0 && i < ids.length - 1 ? '' : ' disabled') + '>다음 학생 →</button>' +
+      '<button class="mini dclose" data-dclose aria-label="닫기">✕</button></div>';
+    h += '<div class="dtitle"><b>' + esc(r.name) + '</b> <span class="badge b-st-' + r.status + '">' + ST_KO[r.status] + '</span></div>';
+    h += '<div class="dact">' + act + '</div>';
+    h += '<section><h4>기본</h4>' + row('번호', r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + row('제출', r.created_at ? new Date(r.created_at).toLocaleString('ko-KR') : '') +
+      row('강의', (r.courses || []).map(function (c) { return COURSE[c] || c; }).join(' · ') || '-') + row('시작', START[r.start_when] || '-') + row('과목', SUBJ[r.subject] || '-') + '</section>';
+    h += '<section><h4>성적</h4>' + EXAMS.map(function (e) { return row(e[1], examLine(r, e)); }).join('') +
+      '<div class="dspark">' + spark(r) + '</div>' + '<div class="dtrend">' + trendCell(r) + '</div></section>';
+    h += '<section><h4>만족도 · 도움된 부분</h4>' + row('만족도', r.satisfaction ? r.satisfaction + '점 / 5' : '-') +
+      row('도움', (r.helpful || []).length ? (r.helpful || []).map(function (x) { return '<span class="badge b-no">' + esc(x) + '</span>'; }).join(' ') : '-') + '</section>';
+    h += '<section><h4>수강 후기</h4><div class="dtext">' + (r.review ? esc(r.review) : '<span class="muted">없음</span>') + '</div></section>';
+    h += '<section><h4>종현샘께 한마디</h4><div class="dtext">' + (r.message ? esc(r.message) : '<span class="muted">없음</span>') + '</div></section>';
+    h += '<section><h4>명단 대조</h4><div>' + b.html + '</div>' +
+      (rosterRows.length ? rosterRows.map(function (x) {
+        return '<div class="droster"><b>' + esc(x.name) + '</b> ' + esc(fmtPhone(x.phone)) + ' <span class="badge ' + (x.status === '정상' ? 'b-ok' : 'b-chk') + '">' + esc(x.status) + '</span>' +
+          (x.note ? '<div class="small muted">' + esc(x.note) + '</div>' : '') + '</div>';
+      }).join('') : '<p class="small muted">명단에 같은 이름 없음</p>') + '</section>';
+    h += '<section><h4>기프티콘</h4>' +
+      row('지급', g ? '지급됨 · ' + esc(g.label || '#' + g.id) + ' · ' + (g.assigned_at ? new Date(g.assigned_at).toLocaleString('ko-KR') : '') : '<span class="muted">아직 지급 안 함</span>') +
+      row('문자 안내', r.notified_at ? '완료 · ' + new Date(r.notified_at).toLocaleString('ko-KR') : '<span class="muted">안 함</span>') + '</section>';
+    el.innerHTML = '<div class="dpanel">' + h + '</div>';
+    el.hidden = false; document.body.classList.add('detail-open');
+    el.querySelector('.dpanel').scrollTop = 0;
+    bindActs(el);
+    el.querySelectorAll('[data-dnav]').forEach(function (bt) {
+      bt.onclick = function () { var j = i + (bt.getAttribute('data-dnav') === 'next' ? 1 : -1); if (ids[j] != null) openDetail(ids[j]); };
+    });
+    el.querySelector('[data-dclose]').onclick = closeDetail;
+  }
+  document.addEventListener('keydown', function (e) {
+    if (UI.detail == null || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if (e.key === 'Escape') closeDetail();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') { var b = document.querySelector('[data-dnav="next"]'); if (b && !b.disabled) b.click(); }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { var c = document.querySelector('[data-dnav="prev"]'); if (c && !c.disabled) c.click(); }
+  });
+
   function card(k, v, unit, sub, red) {
     return '<div class="card"><div class="k">' + k + '</div><div class="v' + (red ? ' red' : '') + '">' + v + '<small style="font-size:15px;font-weight:600"> ' + (unit || '') + '</small></div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
   }
