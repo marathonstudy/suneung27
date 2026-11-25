@@ -9,10 +9,11 @@
   var HELPFUL = ['1일 1지문 매일 루틴', '1:1 코칭·피드백', '24시간 질문', '한수 실전 모의고사',
     '해설 강의', 'EBS 수특·수완 정리', '학습 데이터 레포트', '완주 환급(동기부여)'];
   var SAT = [['😢', '아쉬워요'], ['🙁', '조금 아쉬움'], ['🙂', '보통'], ['😊', '좋아요'], ['😍', '최고예요']];
-  var TOTAL = 10;
+  var TOTAL = 12;
 
   var A = { name: '', phone: '', courses: [], start_when: null, subject: null,
-    pre: { mode: 'raw', raw: '', grade: null, status: null },
+    pre: { raw: '', grade: null, status: null },
+    m6: { mode: 'raw', raw: '', grade: null, status: null }, m9: { mode: 'raw', raw: '', grade: null, status: null },
     sn_raw: '', satisfaction: null, helpful: [], review: '', message: '' };
   var giftLabel = '메가커피';
   var step = 0;            // 0 = 시작, 1..11 = 문항, 'done', 'gift', 'dup'
@@ -58,9 +59,30 @@
     if (step === 'done') return renderDone();
     if (step === 'gift') return renderGift();
     if (step === 'dup') return renderDup();
-    ({ 1: q1, 2: q2, 3: q3, 4: q4,
-       5: function () { qMock('pre', '마라톤 수강 전<br>국어 점수는?', '수강을 시작하기 직전에 본 모의고사 기준이에요.', '본 시험 없음'); },
-       6: q7, 7: q8, 8: q9, 9: q10, 10: q11 })[step]();
+    ({ 1: q1, 2: q2, 3: q3, 4: q4, 5: qPre,
+       6: function () { qMock('m6', '6월 모의평가 점수는?', '국어 점수를 알려 주세요.', '응시 안 함'); },
+       7: function () { qMock('m9', '9월 모의평가 점수는?', '국어 점수를 알려 주세요.', '응시 안 함'); },
+       8: q7, 9: q8, 10: q9, 11: q10, 12: q11 })[step]();
+  }
+
+  /* ---------- 5) 수강 전 점수: 등급 필수 · 원점수 선택 · 기억 안 남 ---------- */
+  function qPre() {
+    var m = A.pre, g = '';
+    for (var i = 1; i <= 9; i++) g += '<button class="opt' + (m.grade === i ? ' on' : '') + '" data-act="pregrade" data-v="' + i + '">' + i + '등급</button>';
+    frame('<h2 class="q-title">마라톤 시작 전,<br>가장 아쉬웠던 국어 시험<br>점수를 알려주세요.</h2><p class="q-sub">등급은 꼭, 원점수는 알면 적어 주세요.</p>' +
+      '<div class="grid3">' + g + '</div>' +
+      '<div class="field" style="margin-top:16px"><label for="raw">원점수 (선택)</label>' +
+      '<input class="inp" id="raw" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" placeholder="0~100" value="' + esc(m.raw) + '"></div>' +
+      '<div class="err" id="rawerr"></div>' +
+      '<button class="btn" id="prego" data-act="prenext"' + (m.grade ? '' : ' disabled') + '>다음</button>' +
+      '<div class="row2"><button class="btn ghost" data-act="preforgot" style="grid-column:1 / span 2">기억 안 남</button></div>', { progress: true });
+    var el = document.getElementById('raw');
+    el.addEventListener('input', function () {
+      el.value = digits(el.value).slice(0, 3); m.raw = el.value;
+      var bad = el.value !== '' && !(Number(el.value) <= 100);
+      document.getElementById('rawerr').textContent = bad ? '0부터 100까지 넣어 주세요.' : '';
+      document.getElementById('prego').disabled = !m.grade || bad;
+    });
   }
 
   /* ---------- 시작 ---------- */
@@ -248,9 +270,12 @@
       if (m.status === 'grade') return { raw: null, grade: m.grade, status: 'grade' };
       return { raw: null, grade: null, status: m.status };
     }
-    var pre = mock(A.pre);
+    var m6 = mock(A.m6), m9 = mock(A.m9);
+    // 수강 전: 등급 필수 + 원점수(선택)는 둘 다 저장 · 기억 안 남이면 둘 다 비움
+    var preForgot = A.pre.status === 'forgot';
     var p = { name: A.name.trim(), phone: A.phone, courses: A.courses, start_when: A.start_when, subject: A.subject,
-      pre_raw: pre.raw, pre_grade: pre.grade, pre_status: pre.status,
+      pre_raw: !preForgot && A.pre.raw !== '' ? Number(A.pre.raw) : null, pre_grade: preForgot ? null : A.pre.grade, pre_status: preForgot ? 'forgot' : 'grade',
+      m6_raw: m6.raw, m6_grade: m6.grade, m6_status: m6.status, m9_raw: m9.raw, m9_grade: m9.grade, m9_status: m9.status,
       sn_raw: Number(A.sn_raw), satisfaction: A.satisfaction, helpful: A.helpful, review: A.review.trim(), message: A.message.trim() };
     rpc('survey_submit', { p: p }).then(function (d) {
       if (d && d.ok) return go('done');
@@ -330,6 +355,9 @@
         A[k] = k === 'satisfaction' ? Number(v) : v; render();
         return setTimeout(next, 140);
       case 'mode': A[k].mode = v; return render();
+      case 'pregrade': A.pre.grade = Number(v); A.pre.status = 'grade'; return render();
+      case 'prenext': A.pre.status = 'grade'; return next();
+      case 'preforgot': A.pre.status = 'forgot'; A.pre.grade = null; A.pre.raw = ''; return next();
       case 'grade': A[k].grade = Number(v); A[k].status = 'grade'; A[k].raw = ''; render(); return setTimeout(next, 140);
       case 'mockst': A[k].status = v; A[k].raw = ''; A[k].grade = null; return next();
       case 'rawnext':
@@ -349,7 +377,7 @@
   });
   // 뒤로 가기 문항에서 지금 쓰던 글은 남겨 둔다
   $app.addEventListener('input', function (e) {
-    if (e.target.id === 'tx') { if (step === 9) A.review = e.target.value; if (step === 10) A.message = e.target.value; }
+    if (e.target.id === 'tx') { if (step === 11) A.review = e.target.value; if (step === 12) A.message = e.target.value; }
   });
 
   step = /#gift/.test(location.hash) ? 'gift' : 0;
