@@ -69,6 +69,7 @@
   $('tabs').addEventListener('click', function (e) {
     var b = e.target.closest('button[data-tab]'); if (!b) return;
     tab = b.getAttribute('data-tab');
+    if (UI.detail != null) closeDetail();
     Array.prototype.forEach.call($('tabs').children, function (x) { x.classList.toggle('on', x === b); });
     render();
   });
