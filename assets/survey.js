@@ -59,10 +59,11 @@
     if (step === 'done') return renderDone();
     if (step === 'gift') return renderGift();
     if (step === 'dup') return renderDup();
-    ({ 1: q1, 2: q2, 3: q3, 4: q4, 5: qPre,
-       6: function () { qMock('m6', '6월 모의평가 점수는?', '국어 점수를 알려 주세요.', '응시 안 함'); },
-       7: function () { qMock('m9', '9월 모의평가 점수는?', '국어 점수를 알려 주세요.', '응시 안 함'); },
-       8: q7, 9: q8, 10: q9, 11: q10, 12: q11 })[step]();
+    // 순서: 이름·번호 → 강의 → 시작 → 과목 → 만족도 → 도움 → 후기 → 한마디 → 수강 전 → 6모 → 9모 → 수능(제출)
+    ({ 1: q1, 2: q2, 3: q3, 4: q4, 5: q8, 6: q9, 7: q10, 8: q11, 9: qPre,
+       10: function () { qMock('m6', '6월 모의평가 점수는?', '국어 점수를 알려 주세요.', '응시 안 함'); },
+       11: function () { qMock('m9', '9월 모의평가 점수는?', '국어 점수를 알려 주세요.', '응시 안 함'); },
+       12: q7 })[step]();
   }
 
   /* ---------- 5) 수강 전 점수: 등급 필수 · 원점수 선택 · 기억 안 남 ---------- */
@@ -221,7 +222,8 @@
     frame('<h2 class="q-title">수능 가채점<br>원점수는?</h2><p class="q-sub">국어 원점수만 넣어 주세요.</p>' +
       '<input class="inp big" id="raw" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" placeholder="0~100" value="' + esc(A.sn_raw) + '">' +
       '<div class="unit">원점수 (100점 만점)</div><div class="err" id="rawerr"></div>' +
-      '<div class="actions"><button class="btn" id="rawgo" data-act="rawnext" data-k="sn" disabled>다음</button></div>', { progress: true });
+      '<div class="err" id="suberr"></div>' +
+      '<div class="actions"><button class="btn" id="rawgo" data-act="snsubmit" disabled>제출하기</button></div>', { progress: true });
     bindRaw('sn');
   }
 
@@ -245,9 +247,21 @@
   }
 
   /* ---------- 10) 후기 ---------- */
+  var LEADS = ['제일 힘들었던 건 ', '도움이 됐던 건 ', '후배에게 하고 싶은 말은 '];
+  // 말머리만 있고 뒤에 내용이 없으면 그 말머리는 지운다
+  function cleanReview(t) {
+    var re = new RegExp('(' + LEADS.map(function (l) { return l.trim(); }).join('|') + ')\\s*$');
+    return String(t || '').split('\n').map(function (orig) {
+      var line = orig, prev;
+      do { prev = line; line = line.replace(re, '').replace(/\s+$/, ''); } while (line !== prev);
+      return line === '' && orig.trim() !== '' ? null : line;   // 말머리만 있던 줄은 통째로 뺌
+    }).filter(function (l) { return l !== null; }).join('\n').trim();
+  }
   function q10() {
-    frame('<h2 class="q-title">수강 후기를<br>남겨 주세요</h2><p class="q-sub">선택이에요. 짧아도 좋아요.</p>' +
-      '<textarea class="inp" id="tx" maxlength="2000" placeholder="마라톤 하면서 좋았던 점, 달라진 점">' + esc(A.review) + '</textarea>' +
+    frame('<h2 class="q-title">마라톤 하면서<br>가장 기억에 남는 건?</h2>' +
+      '<p class="q-sub">점수와 상관없이, 솔직한 이야기가 후배들에게 가장 큰 도움이 됩니다.</p>' +
+      '<div class="leads">' + LEADS.map(function (l, i) { return '<button class="lead" data-act="lead" data-i="' + i + '">' + esc(l.trim()) + '</button>'; }).join('') + '</div>' +
+      '<textarea class="inp" id="tx" maxlength="2000" placeholder="예) 처음엔 귀찮았는데 어느 순간 지문 읽는 게 편해졌어요">' + esc(A.review) + '</textarea>' +
       '<p class="hint">남긴 후기는 이름을 가려 소개될 수 있습니다.</p>' +
       '<div class="actions"><button class="btn" data-act="textnext" data-k="review">다음</button>' +
       '<button class="linkbtn" data-act="skip" data-k="review">건너뛰기</button></div>', { progress: true });
@@ -257,13 +271,12 @@
   function q11() {
     frame('<h2 class="q-title">종현샘께 한마디</h2><p class="q-sub">종현샘이 직접 읽어봅니다!</p>' +
       '<textarea class="inp" id="tx" maxlength="2000" placeholder="자유롭게 적어 주세요">' + esc(A.message) + '</textarea>' +
-      '<div class="err" id="suberr"></div>' +
-      '<div class="actions"><button class="btn" id="subbtn" data-act="submit">제출하기</button>' +
-      '<button class="linkbtn" data-act="submitskip">건너뛰고 제출</button></div>', { progress: true });
+      '<div class="actions"><button class="btn" data-act="textnext" data-k="message">다음</button>' +
+      '<button class="linkbtn" data-act="skip" data-k="message">건너뛰기</button></div>', { progress: true });
   }
 
   function submit() {
-    var btn = document.getElementById('subbtn');
+    var btn = document.getElementById('rawgo');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 보내는 중'; }
     function mock(m) {
       if (m.status === 'raw') return { raw: Number(m.raw), grade: null, status: 'raw' };
@@ -276,7 +289,7 @@
     var p = { name: A.name.trim(), phone: A.phone, courses: A.courses, start_when: A.start_when, subject: A.subject,
       pre_raw: !preForgot && A.pre.raw !== '' ? Number(A.pre.raw) : null, pre_grade: preForgot ? null : A.pre.grade, pre_status: preForgot ? 'forgot' : 'grade',
       m6_raw: m6.raw, m6_grade: m6.grade, m6_status: m6.status, m9_raw: m9.raw, m9_grade: m9.grade, m9_status: m9.status,
-      sn_raw: Number(A.sn_raw), satisfaction: A.satisfaction, helpful: A.helpful, review: A.review.trim(), message: A.message.trim() };
+      sn_raw: Number(A.sn_raw), satisfaction: A.satisfaction, helpful: A.helpful, review: cleanReview(A.review), message: A.message.trim() };
     rpc('survey_submit', { p: p }).then(function (d) {
       if (d && d.ok) return go('done');
       if (d && d.reason === 'duplicate') return go('dup');
@@ -370,14 +383,21 @@
         return render();
       case 'textnext': A[k] = document.getElementById('tx').value; return next();
       case 'skip': A[k] = ''; return next();
-      case 'submit': A.message = document.getElementById('tx').value; return submit();
-      case 'submitskip': A.message = ''; return submit();
+      case 'snsubmit': A.sn_raw = document.getElementById('raw').value; return submit();
+      case 'lead':   // 말머리만 넣고 커서를 뒤에
+        var tx = document.getElementById('tx'), lead = LEADS[Number(b.getAttribute('data-i'))];
+        var cur = tx.value.replace(/\s+$/, '');
+        tx.value = (cur ? cur + '\n' : '') + lead;
+        A.review = tx.value;
+        tx.focus(); tx.setSelectionRange(tx.value.length, tx.value.length);
+        tx.scrollTop = tx.scrollHeight;
+        return;
       case 'giftcheck': return giftCheck();
     }
   });
   // 뒤로 가기 문항에서 지금 쓰던 글은 남겨 둔다
   $app.addEventListener('input', function (e) {
-    if (e.target.id === 'tx') { if (step === 11) A.review = e.target.value; if (step === 12) A.message = e.target.value; }
+    if (e.target.id === 'tx') { if (step === 7) A.review = e.target.value; if (step === 8) A.message = e.target.value; }
   });
 
   step = /#gift/.test(location.hash) ? 'gift' : 0;
