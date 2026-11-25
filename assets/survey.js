@@ -9,10 +9,10 @@
   var HELPFUL = ['1일 1지문 매일 루틴', '1:1 코칭·피드백', '24시간 질문', '한수 실전 모의고사',
     '해설 강의', 'EBS 수특·수완 정리', '학습 데이터 레포트', '완주 환급(동기부여)'];
   var SAT = [['😢', '아쉬워요'], ['🙁', '조금 아쉬움'], ['🙂', '보통'], ['😊', '좋아요'], ['😍', '최고예요']];
-  var TOTAL = 11;
+  var TOTAL = 10;
 
   var A = { name: '', phone: '', courses: [], start_when: null, subject: null,
-    m6: { mode: 'raw', raw: '', grade: null, status: null }, m9: { mode: 'raw', raw: '', grade: null, status: null },
+    pre: { mode: 'raw', raw: '', grade: null, status: null },
     sn_raw: '', satisfaction: null, helpful: [], review: '', message: '' };
   var giftLabel = '메가커피';
   var step = 0;            // 0 = 시작, 1..11 = 문항, 'done', 'gift', 'dup'
@@ -58,8 +58,9 @@
     if (step === 'done') return renderDone();
     if (step === 'gift') return renderGift();
     if (step === 'dup') return renderDup();
-    ({ 1: q1, 2: q2, 3: q3, 4: q4, 5: function () { qMock('m6', '6월 모의평가'); }, 6: function () { qMock('m9', '9월 모의평가'); },
-       7: q7, 8: q8, 9: q9, 10: q10, 11: q11 })[step]();
+    ({ 1: q1, 2: q2, 3: q3, 4: q4,
+       5: function () { qMock('pre', '마라톤 수강 전<br>국어 점수는?', '수강을 시작하기 직전에 본 모의고사 기준이에요.', '본 시험 없음'); },
+       6: q7, 7: q8, 8: q9, 9: q10, 10: q11 })[step]();
   }
 
   /* ---------- 시작 ---------- */
@@ -156,7 +157,7 @@
   }
 
   /* ---------- 5) 6월 · 6) 9월 모평 ---------- */
-  function qMock(key, title) {
+  function qMock(key, title, sub, noneLabel) {
     var m = A[key];
     var body;
     if (m.mode === 'raw') {
@@ -168,11 +169,11 @@
       for (var i = 1; i <= 9; i++) g += '<button class="opt' + (m.status === 'grade' && m.grade === i ? ' on' : '') + '" data-act="grade" data-k="' + key + '" data-v="' + i + '">' + i + '등급</button>';
       body = '<div class="grid3">' + g + '</div>';
     }
-    frame('<h2 class="q-title">' + title + ' 점수는?</h2><p class="q-sub">국어 점수를 알려 주세요.</p>' +
+    frame('<h2 class="q-title">' + title + '</h2><p class="q-sub">' + sub + '</p>' +
       '<div class="seg"><button class="' + (m.mode === 'raw' ? 'on' : '') + '" data-act="mode" data-k="' + key + '" data-v="raw">원점수로 입력</button>' +
       '<button class="' + (m.mode === 'grade' ? 'on' : '') + '" data-act="mode" data-k="' + key + '" data-v="grade">등급으로 입력</button></div>' +
       body +
-      '<div class="row2"><button class="btn ghost' + (m.status === 'none' ? ' on' : '') + '" data-act="mockst" data-k="' + key + '" data-v="none">응시 안 함</button>' +
+      '<div class="row2"><button class="btn ghost' + (m.status === 'none' ? ' on' : '') + '" data-act="mockst" data-k="' + key + '" data-v="none">' + noneLabel + '</button>' +
       '<button class="btn ghost" data-act="mockst" data-k="' + key + '" data-v="forgot">기억 안 남</button></div>', { progress: true });
     bindRaw(key);
   }
@@ -247,9 +248,9 @@
       if (m.status === 'grade') return { raw: null, grade: m.grade, status: 'grade' };
       return { raw: null, grade: null, status: m.status };
     }
-    var m6 = mock(A.m6), m9 = mock(A.m9);
+    var pre = mock(A.pre);
     var p = { name: A.name.trim(), phone: A.phone, courses: A.courses, start_when: A.start_when, subject: A.subject,
-      m6_raw: m6.raw, m6_grade: m6.grade, m6_status: m6.status, m9_raw: m9.raw, m9_grade: m9.grade, m9_status: m9.status,
+      pre_raw: pre.raw, pre_grade: pre.grade, pre_status: pre.status,
       sn_raw: Number(A.sn_raw), satisfaction: A.satisfaction, helpful: A.helpful, review: A.review.trim(), message: A.message.trim() };
     rpc('survey_submit', { p: p }).then(function (d) {
       if (d && d.ok) return go('done');
@@ -348,7 +349,7 @@
   });
   // 뒤로 가기 문항에서 지금 쓰던 글은 남겨 둔다
   $app.addEventListener('input', function (e) {
-    if (e.target.id === 'tx') { if (step === 10) A.review = e.target.value; if (step === 11) A.message = e.target.value; }
+    if (e.target.id === 'tx') { if (step === 9) A.review = e.target.value; if (step === 10) A.message = e.target.value; }
   });
 
   step = /#gift/.test(location.hash) ? 'gift' : 0;
