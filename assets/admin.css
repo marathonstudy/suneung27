@@ -179,3 +179,10 @@ body.detail-open .am { margin-right: 460px; }
 }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
+
+/* 스토리 이미지 고르기 */
+label.sel { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; vertical-align: middle; cursor: pointer; }
+label.sel input { width: 18px; height: 18px; accent-color: var(--red); margin: 0; }
+label.sel i { font-style: normal; font-size: 11px; font-weight: 800; color: var(--red); min-width: 14px; }
+label.sel.off { cursor: default; opacity: .5; }
+label.sel.off i { color: var(--muted); font-weight: 600; min-width: 0; }

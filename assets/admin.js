@@ -214,7 +214,9 @@
       '</div>';
     var sl = smsText().length;
     h += '<p class="small muted" style="margin:-4px 0 12px">문자 안내 문구(<b style="color:' + (sl > 90 ? 'var(--red)' : 'inherit') + '">' + sl + '자' + (sl > 90 ? ' · 90자 넘음 — 설정에서 짧은 주소로 바꿔 주세요' : '') + '</b>): ' + esc(smsText()) + '</p>';
-    h += '<div class="toolbar"><input id="qname" class="qname" type="search" placeholder="이름 검색" value="' + esc(UI.q || '') + '"><span class="small muted" id="qcount"></span></div>';
+    h += '<div class="toolbar"><input id="qname" class="qname" type="search" placeholder="이름 검색" value="' + esc(UI.q || '') + '"><span class="small muted" id="qcount"></span><span class="sp"></span>' +
+      '<button class="mini deep" id="storybulk"' + ((UI.sel || []).length ? '' : ' disabled') + '>선택한 학생 스토리 한꺼번에 받기 <b id="selcnt">' + (UI.sel || []).length + '</b>명</button>' +
+      '<span class="small muted">스토리 CASE 마지막 번호 <b id="caselast">' + caseLast() + '</b></span><button class="mini" id="casereset">번호 초기화</button></div>';
     UI.detailIds = list.map(function (r) { return r.id; });
     if (!list.length) h += '<p class="muted">해당하는 응답이 없습니다.</p>';
     else {
@@ -230,7 +232,7 @@
           act = '<span class="badge b-st-approved">승인 · ' + esc(g ? g.label || ('#' + g.id) : '') + '</span><br>' + smsLine(r, true);
         }
         h += '<tr data-name="' + esc(nk(r.name)) + '"' + (r.status === 'rejected' ? ' class="dim"' : '') + '>' +
-          '<td class="nowrap c-name" data-l="이름"><button class="nm-link" data-detail="' + r.id + '" title="상세 보기">' + esc(r.name) + '</button></td>' +
+          '<td class="nowrap c-name" data-l="이름">' + selBox(r) + '<button class="nm-link" data-detail="' + r.id + '" title="상세 보기">' + esc(r.name) + '</button></td>' +
           '<td class="num" data-l="번호">' + (r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + '</td>' +
           '<td class="nowrap" data-l="강의">' + (r.courses || []).map(function (c) { return COURSE[c] || c; }).join('·') + '</td>' +
           '<td class="nowrap" data-l="점수 추이">' + trendCell(r) + '</td>' +
@@ -255,6 +257,15 @@
       approve(bulk.map(function (r) { return r.id; }));
     };
     $('smsx').onclick = function () { smsExcel(unnotified); };
+    $('storybulk').onclick = storyBulk;
+    $('casereset').onclick = function () { if (!confirm('스토리 CASE 번호를 처음(01)부터 다시 쓸까요?')) return; caseSet(0); $('caselast').textContent = '0'; toast('CASE 번호를 초기화했습니다'); };
+    v.querySelectorAll('[data-sel]').forEach(function (c) {
+      c.onchange = function () {
+        var id = Number(c.getAttribute('data-sel')); UI.sel = (UI.sel || []).filter(function (x) { return x !== id; });
+        if (c.checked) UI.sel.push(id);
+        selRefresh(v);
+      };
+    });
     $('delph').onclick = function () {
       if (!confirm('삭제하면 학생이 기프티콘을 다시 볼 수 없습니다. 이벤트가 끝난 뒤에 누르세요.\n\n지급 완료된 ' + paidPhones + '명의 휴대폰 번호를 지울까요? (성적·만족도·후기·한마디는 남습니다)')) return;
       rpc('survey_admin_delete_phones', { p_token: token }).then(function (d) { toast('번호 ' + d.changed + '개를 지웠습니다'); load(); }).catch(err);
@@ -270,6 +281,7 @@
     });
     root.querySelectorAll('[data-rj]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-rj'))], 'rejected'); }; });
     root.querySelectorAll('[data-pd]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-pd'))], 'pending'); }; });
+    root.querySelectorAll('[data-story]').forEach(function (b) { b.onclick = function () { b.disabled = true; Promise.resolve(storyOne(Number(b.getAttribute('data-story')))).then(function () { b.disabled = false; }); }; });
     root.querySelectorAll('[data-sr]').forEach(function (b) { b.onclick = function () { b.disabled = true; smsSend([Number(b.getAttribute('data-sr'))]); }; });
   }
   function qMatch(r) { var q = nk(UI.q || ''); return !q || nk(r.name).indexOf(q) >= 0; }
@@ -329,7 +341,7 @@
       '<button class="mini" data-dnav="next"' + (i >= 0 && i < ids.length - 1 ? '' : ' disabled') + '>다음 학생 →</button>' +
       '<button class="mini dclose" data-dclose aria-label="닫기">✕</button></div>';
     h += '<div class="dtitle"><b>' + esc(r.name) + '</b> <span class="badge b-st-' + r.status + '">' + ST_KO[r.status] + '</span></div>';
-    h += '<div class="dact">' + act + '</div>';
+    h += '<div class="dact">' + act + (act ? ' ' : '') + storyBtn(r) + '</div>';
     h += '<section><h4>기본</h4>' + row('번호', r.phone ? fmtPhone(r.phone) : '<span class="muted">삭제됨</span>') + row('제출', r.created_at ? new Date(r.created_at).toLocaleString('ko-KR') : '') +
       row('강의', (r.courses || []).map(function (c) { return COURSE[c] || c; }).join(' · ') || '-') + row('시작', START[r.start_when] || '-') + row('과목', SUBJ[r.subject] || '-') + '</section>';
     h += '<section><h4>성적</h4>' + row('수강 전', preLine(r)) + EXAMS.map(function (e) { return row(e[1], examLine(r, e)); }).join('') +
@@ -408,6 +420,231 @@
       .then(function (d) { toast(d.changed + '명을 「문자 안내 완료」로 표시했습니다'); return load(); }).catch(err);
   }
   function stamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); }
+
+  /* ============ 인스타 스토리 이미지 (학생 1명 = CASE 1장, 1080×1920 PNG) ============
+     휴대폰 번호 · 「종현샘께 한마디」는 절대 쓰지 않는다. */
+  var STORY_W = 1080, STORY_H = 1920, FONT = '"Pretendard Variable", Pretendard, "Malgun Gothic", sans-serif';
+  var CASE_KEY = 'survey_story_case';
+  function caseLast() { return Number(localStorage.getItem(CASE_KEY) || 0) || 0; }
+  function caseSet(n) { localStorage.setItem(CASE_KEY, String(n)); }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function maskO(name) { name = nk(name); return name ? name[0] + 'O'.repeat(Math.max(name.length - 1, 2)) : ''; }
+  function hasReview(r) { return !!(r.review && String(r.review).trim()); }
+  // 출발점: 학생이 고른 수강 전 등급. 없으면 6·9모 중 낮은 쪽(그 시험 이름으로 표시)
+  function storyInfo(r) {
+    var p = preOf(r), m6 = gradeOf(r, 'm6').g, m9 = gradeOf(r, 'm9').g, sn = gradeOf(r, 'sn').g;
+    var startL = '수강 전';
+    if (p.how === 'fallback') startL = (m9 == null || (m6 != null && m6 >= m9)) ? '6모' : '9모';
+    var pts = [];
+    if (p.how === 'self') pts.push({ l: '수강 전', g: p.g });
+    if (m6 != null) pts.push({ l: '6모', g: m6 });
+    if (m9 != null) pts.push({ l: '9모', g: m9 });
+    if (sn != null) pts.push({ l: '수능', g: sn });
+    return { start: p.g, startL: startL, sn: sn, pts: pts, up: p.g != null && sn != null && sn < p.g ? p.g - sn : 0 };
+  }
+  function storyFile(r, no) {
+    var s = storyInfo(r);
+    var g = (s.start != null ? s.startL.replace(/\s/g, '') + s.start : '') + (s.sn != null ? (s.start != null ? '→' : '') + '수능' + s.sn : '');
+    return 'CASE' + pad2(no) + '_' + maskO(r.name) + (g ? '_' + g : '') + '.png';
+  }
+  // keep-all 줄바꿈: 띄어쓰기에서만 자르고, 한 낱말이 한 줄보다 길 때만 글자 단위로
+  function wrapText(ctx, text, maxW) {
+    var lines = [];
+    String(text).replace(/\r/g, '').split('\n').forEach(function (para) {
+      var words = para.split(/ +/).filter(function (w) { return w !== ''; }), cur = '';
+      if (!words.length) { lines.push(''); return; }
+      words.forEach(function (w) {
+        var t = cur ? cur + ' ' + w : w;
+        if (ctx.measureText(t).width <= maxW) { cur = t; return; }
+        if (cur) lines.push(cur);
+        cur = '';
+        while (ctx.measureText(w).width > maxW) {
+          var i = 1; while (i < w.length && ctx.measureText(w.slice(0, i + 1)).width <= maxW) i++;
+          lines.push(w.slice(0, i)); w = w.slice(i);
+        }
+        cur = w;
+      });
+      lines.push(cur);
+    });
+    while (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  }
+  // 상자에 맞춰 글자 크기 자동 축소, 최소 크기에서도 넘치면 끝을 「…」
+  function fitText(ctx, text, maxW, maxH, big, small, weight, lh) {
+    var fs, ls;
+    for (fs = big; fs >= small; fs -= 2) {
+      ctx.font = weight + ' ' + fs + 'px ' + FONT;
+      ls = wrapText(ctx, text, maxW);
+      if (ls.length * fs * lh <= maxH) return { fs: fs, lines: ls, cut: false };
+    }
+    fs = small; ctx.font = weight + ' ' + fs + 'px ' + FONT;
+    ls = wrapText(ctx, text, maxW);
+    var n = Math.max(1, Math.floor(maxH / (fs * lh))), keep = ls.slice(0, n), last = keep[n - 1] || '';
+    while (last && ctx.measureText(last + '…”').width > maxW) last = last.slice(0, -1);
+    keep[n - 1] = last.replace(/\s+$/, '') + '…”';
+    return { fs: fs, lines: keep, cut: true };
+  }
+  function rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function runsWidth(ctx, runs) { return runs.reduce(function (s, r) { ctx.font = r.f; return s + ctx.measureText(r.t).width; }, 0); }
+  // 여러 색 조각을 한 줄로 (가운데 정렬)
+  function drawRuns(ctx, runs, cx, y) {
+    var x = cx - runsWidth(ctx, runs) / 2;
+    ctx.textAlign = 'left';
+    runs.forEach(function (r) { ctx.font = r.f; ctx.fillStyle = r.c; ctx.fillText(r.t, x, y); x += ctx.measureText(r.t).width; });
+  }
+  function storyLoadFonts(text) {
+    if (!document.fonts || !document.fonts.load) return Promise.resolve();
+    return Promise.all([500, 600, 700, 800].map(function (w) { return document.fonts.load(w + ' 40px "Pretendard Variable"', text); }))
+      .then(function () { return document.fonts.ready; }).catch(function () {});
+  }
+  function drawStory(r, no) {
+    var s = storyInfo(r), W = STORY_W, H = STORY_H, M = 90;
+    var RED = '#A8151C', DEEP = '#7A0C12', INK = '#2C2C2C', MUTED = '#6E675E', OK = '#1F7A4A', LINE = '#E3DDD4';
+    var title = '2027 수능 · 마라톤 CASE ' + pad2(no);
+    var who = mask(nk(r.name)) + ' 학생 · ' + ((r.courses || []).map(function (c) { return COURSE[c] || c; }).join('/') || '강의') + (r.subject ? ' · ' + SUBJ_S[r.subject] : '');
+    var review = '“' + String(r.review || '').trim() + '”';
+    return storyLoadFonts(title + who + review + '수강 전등급→수능6모9모▲상승가채점기준마라톤스터디0123456789…').then(function () {
+      var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      var ctx = cv.getContext('2d'); ctx.textBaseline = 'alphabetic';
+      // 바탕
+      ctx.fillStyle = '#FAF8F5'; ctx.fillRect(0, 0, W, H);
+      var gr = ctx.createLinearGradient(0, 0, W, 0); gr.addColorStop(0, DEEP); gr.addColorStop(1, RED);
+      ctx.fillStyle = gr; ctx.fillRect(0, 0, W, 24);
+      // 제목 · 학생
+      ctx.textAlign = 'center';
+      ctx.font = '800 50px ' + FONT; ctx.fillStyle = DEEP; ctx.fillText(title, W / 2, 150);
+      ctx.font = '600 40px ' + FONT; ctx.fillStyle = MUTED; ctx.fillText(who, W / 2, 222, W - 2 * M);
+      ctx.fillStyle = LINE; ctx.fillRect(M, 270, W - 2 * M, 3);
+      // 큰 글씨: 수강 전 N등급 → 수능 M등급 (너비에 맞춰 줄임)
+      var runs = function (fs) {
+        var a = [], b = '800 ' + fs + 'px ' + FONT, l = '700 ' + Math.round(fs * 0.62) + 'px ' + FONT;
+        if (s.start != null) { a.push({ t: s.startL + ' ', f: l, c: INK }); a.push({ t: s.start + '등급', f: b, c: s.sn != null ? MUTED : RED }); }
+        if (s.start != null && s.sn != null) a.push({ t: '  →  ', f: l, c: MUTED });
+        if (s.sn != null) { a.push({ t: '수능 ', f: l, c: INK }); a.push({ t: s.sn + '등급', f: b, c: RED }); }
+        return a;
+      };
+      var hf = 120;
+      while (hf > 56 && runsWidth(ctx, runs(hf)) > W - 2 * M) hf -= 4;
+      drawRuns(ctx, runs(hf), W / 2, 420);
+      if (s.up) {
+        var y = 470;
+        ctx.font = '800 44px ' + FONT; var pt = '▲ ' + s.up + '등급 상승', pw = ctx.measureText(pt).width + 64;
+        ctx.fillStyle = '#E3F2E9'; rrect(ctx, (W - pw) / 2, y, pw, 76, 38); ctx.fill();
+        ctx.fillStyle = OK; ctx.textAlign = 'center'; ctx.fillText(pt, W / 2, y + 54);
+      }
+      // 등급 그래프 (1등급이 위)
+      var gx = M, gy = 590, gw = W - 2 * M, gh = 430;
+      ctx.fillStyle = '#fff'; rrect(ctx, gx, gy, gw, gh, 36); ctx.fill(); ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke();
+      if (s.pts.length) {
+        var gs = s.pts.map(function (p) { return p.g; }), lo = Math.max(1, Math.min.apply(null, gs) - 1), hi = Math.min(9, Math.max.apply(null, gs) + 1);
+        if (hi - lo < 2) { if (lo > 1) lo--; else hi = Math.min(9, hi + 1); }
+        var px0 = gx + 190, px1 = gx + gw - 90, py0 = gy + 90, py1 = gy + gh - 120;
+        var X = function (i) { return s.pts.length === 1 ? (px0 + px1) / 2 : px0 + (px1 - px0) * i / (s.pts.length - 1); };
+        var Y = function (g) { return py0 + (py1 - py0) * (g - lo) / (hi - lo); };
+        ctx.font = '600 28px ' + FONT; ctx.textAlign = 'right';
+        for (var g = lo; g <= hi; g++) {
+          ctx.strokeStyle = '#EFEAE4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px0 - 50, Y(g)); ctx.lineTo(px1 + 50, Y(g)); ctx.stroke();
+          ctx.fillStyle = '#A39C92'; ctx.fillText(g + '등급', px0 - 66, Y(g) + 10);
+        }
+        ctx.strokeStyle = RED; ctx.lineWidth = 8; ctx.lineJoin = 'round'; ctx.beginPath();
+        s.pts.forEach(function (p, i) { if (i) ctx.lineTo(X(i), Y(p.g)); else ctx.moveTo(X(i), Y(p.g)); }); ctx.stroke();
+        ctx.textAlign = 'center';
+        s.pts.forEach(function (p, i) {
+          var last = i === s.pts.length - 1;
+          ctx.beginPath(); ctx.arc(X(i), Y(p.g), last ? 20 : 15, 0, Math.PI * 2); ctx.fillStyle = last ? RED : '#fff'; ctx.fill();
+          ctx.lineWidth = 6; ctx.strokeStyle = RED; ctx.stroke();
+          ctx.font = '800 36px ' + FONT; ctx.fillStyle = last ? RED : INK; ctx.fillText(p.g + '등급', X(i), Y(p.g) - 36);
+          ctx.font = '700 32px ' + FONT; ctx.fillStyle = MUTED; ctx.fillText(p.l, X(i), gy + gh - 42);
+        });
+      }
+      // 후기 전문
+      var bx = M, by = 1070, bw = W - 2 * M, bh = 660;
+      ctx.fillStyle = '#fff'; rrect(ctx, bx, by, bw, bh, 36); ctx.fill(); ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = RED; ctx.fillRect(bx, by + 60, 10, bh - 120);
+      var tx = bx + 70, tw = bw - 130, ty = by + 70, th = bh - 140, lh = 1.55;
+      var ft = fitText(ctx, review, tw, th, 64, 34, '700', lh);
+      ctx.font = '700 ' + ft.fs + 'px ' + FONT; ctx.fillStyle = INK; ctx.textAlign = 'left';
+      var top = ty + (th - ft.lines.length * ft.fs * lh) / 2;
+      ft.lines.forEach(function (ln, i) { ctx.fillText(ln, tx, top + ft.fs * (i * lh + 1.12)); });
+      // 맨 아래
+      ctx.font = '600 30px ' + FONT; ctx.fillStyle = '#A39C92'; ctx.fillText('수능은 가채점 기준', M, 1840);
+      ctx.textAlign = 'right'; ctx.font = '800 36px ' + FONT; ctx.fillStyle = RED; ctx.fillText('마라톤 스터디', W - M, 1842);
+      var meta = { fit: { fs: ft.fs, lines: ft.lines.length, cut: ft.cut }, headFont: hf, headWidth: runsWidth(ctx, runs(hf)), whoWidth: (ctx.font = '600 40px ' + FONT, ctx.measureText(who).width) };
+      return new Promise(function (res) { cv.toBlob(function (b) { res({ blob: b, fit: ft, meta: meta }); }, 'image/png'); });
+    });
+  }
+  function saveBlob(blob, name) {
+    var a = document.createElement('a'), u = URL.createObjectURL(blob);
+    a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
+  }
+  // 압축 없는 zip (UTF-8 파일명)
+  var CRC = (function () { var t = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(u) { var c = 0xFFFFFFFF; for (var i = 0; i < u.length; i++) c = CRC[(c ^ u[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function makeZip(files) {   // [{name, data: Uint8Array}]
+    var enc = new TextEncoder(), parts = [], central = [], off = 0;
+    var d = new Date(), dt = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), dd = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    files.forEach(function (f) {
+      var nm = enc.encode(f.name), crc = crc32(f.data), h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+      h.setUint16(10, dt, true); h.setUint16(12, dd, true); h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true);
+      h.setUint16(26, nm.length, true); h.setUint16(28, 0, true);
+      parts.push(new Uint8Array(h.buffer), nm, f.data);
+      var c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+      c.setUint16(12, dt, true); c.setUint16(14, dd, true); c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true);
+      c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+      central.push(new Uint8Array(c.buffer), nm);
+      off += 30 + nm.length + f.data.length;
+    });
+    var csize = central.reduce(function (s, x) { return s + x.length; }, 0), e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+    return new Blob(parts.concat(central, [new Uint8Array(e.buffer)]), { type: 'application/zip' });
+  }
+  function storyOne(id) {
+    var r = respById(id); if (!r || !hasReview(r)) return;
+    var no = caseLast() + 1;
+    return drawStory(r, no).then(function (o) {
+      caseSet(no); saveBlob(o.blob, storyFile(r, no));
+      toast('CASE ' + pad2(no) + ' 스토리 이미지를 받았습니다' + (o.fit.cut ? ' · 후기가 길어 끝을 줄였습니다' : ''));
+      render(); if (UI.detail != null) renderDetail();
+    }).catch(err);
+  }
+  function storyBulk() {
+    var ids = (UI.sel || []).filter(function (id) { var r = respById(id); return r && hasReview(r); });
+    if (!ids.length) return;
+    var files = [], cut = 0, i = 0;
+    toast('스토리 이미지 ' + ids.length + '장 만드는 중…');
+    (function next() {
+      if (i >= ids.length) {
+        caseSet(Math.max(caseLast(), ids.length));
+        saveBlob(makeZip(files), '스토리_CASE01-' + pad2(ids.length) + '_' + stamp() + '.zip');
+        toast('스토리 이미지 ' + files.length + '장을 zip 으로 받았습니다' + (cut ? ' · 후기가 길어 끝을 줄인 것 ' + cut + '장' : ''));
+        UI.sel = []; render(); return Promise.resolve();
+      }
+      var r = respById(ids[i]), no = i + 1; i++;
+      return drawStory(r, no).then(function (o) {
+        if (o.fit.cut) cut++;
+        return o.blob.arrayBuffer().then(function (ab) { files.push({ name: storyFile(r, no), data: new Uint8Array(ab) }); });
+      }).then(next);
+    })().catch(err);
+  }
+  function storyBtn(r) {
+    return hasReview(r) ? '<button class="mini deep" data-story="' + r.id + '">스토리 이미지 받기</button>'
+      : '<button class="mini" disabled style="opacity:.45">스토리 이미지 받기</button> <span class="small muted">후기 없음</span>';
+  }
+  // 목록 체크박스: 체크한 순서 = CASE 번호 순서 (옆에 작게 번호)
+  function selBox(r) {
+    var i = (UI.sel || []).indexOf(r.id);
+    if (!hasReview(r)) return '<label class="sel off" title="후기 없음 — 스토리 이미지를 만들 수 없음"><input type="checkbox" disabled><i>후기 없음</i></label>';
+    return '<label class="sel" title="스토리 이미지 고르기"><input type="checkbox" data-sel="' + r.id + '"' + (i >= 0 ? ' checked' : '') + '><i>' + (i >= 0 ? pad2(i + 1) : '') + '</i></label>';
+  }
+  function selRefresh(v) {
+    var sel = UI.sel || [];
+    v.querySelectorAll('[data-sel]').forEach(function (c) { var i = sel.indexOf(Number(c.getAttribute('data-sel'))); c.nextElementSibling.textContent = i >= 0 ? pad2(i + 1) : ''; });
+    $('selcnt').textContent = sel.length; $('storybulk').disabled = !sel.length;
+  }
+  window.__story = { draw: drawStory, file: storyFile, info: storyInfo };   // 시험·점검용
 
   /* ============ 통계 ============ */
   function filtered() {
