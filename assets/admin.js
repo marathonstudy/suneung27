@@ -532,19 +532,27 @@
         ctx.fillStyle = '#E3F2E9'; rrect(ctx, (W - pw) / 2, y, pw, 76, 38); ctx.fill();
         ctx.fillStyle = OK; ctx.textAlign = 'center'; ctx.fillText(pt, W / 2, y + 54);
       }
+      // 배치: 후기가 다 들어갈 때까지 그래프를 낮추고 후기 상자를 키운다 (▲ 없으면 그만큼 위로)
+      var gx = M, gy = s.up ? 590 : 500, gw = W - 2 * M, gh, bx = M, bw = W - 2 * M, by, bh, ft, lh = 1.5;
+      var tw = bw - 120, BOT = 1770;
+      [440, 380, 330].some(function (h) {
+        gh = h; by = gy + gh + 44; bh = BOT - by;
+        ft = fitText(ctx, review, tw, bh - 110, 64, 34, '700', lh);
+        return !ft.cut;
+      });
       // 등급 그래프 (1등급이 위)
-      var gx = M, gy = 590, gw = W - 2 * M, gh = 430;
       ctx.fillStyle = '#fff'; rrect(ctx, gx, gy, gw, gh, 36); ctx.fill(); ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke();
       if (s.pts.length) {
         var gs = s.pts.map(function (p) { return p.g; }), lo = Math.max(1, Math.min.apply(null, gs) - 1), hi = Math.min(9, Math.max.apply(null, gs) + 1);
         if (hi - lo < 2) { if (lo > 1) lo--; else hi = Math.min(9, hi + 1); }
-        var px0 = gx + 190, px1 = gx + gw - 90, py0 = gy + 90, py1 = gy + gh - 120;
+        var px0 = gx + 190, px1 = gx + gw - 90, py0 = gy + 90, py1 = gy + gh - 108;
+        var step = Math.max(1, Math.ceil(40 / ((py1 - py0) / (hi - lo))));   // 등급 글자 사이 40px 이상
         var X = function (i) { return s.pts.length === 1 ? (px0 + px1) / 2 : px0 + (px1 - px0) * i / (s.pts.length - 1); };
         var Y = function (g) { return py0 + (py1 - py0) * (g - lo) / (hi - lo); };
         ctx.font = '600 28px ' + FONT; ctx.textAlign = 'right';
         for (var g = lo; g <= hi; g++) {
           ctx.strokeStyle = '#EFEAE4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px0 - 50, Y(g)); ctx.lineTo(px1 + 50, Y(g)); ctx.stroke();
-          ctx.fillStyle = '#A39C92'; ctx.fillText(g + '등급', px0 - 66, Y(g) + 10);
+          if ((g - lo) % step === 0) { ctx.fillStyle = '#A39C92'; ctx.fillText(g + '등급', px0 - 66, Y(g) + 10); }
         }
         ctx.strokeStyle = RED; ctx.lineWidth = 8; ctx.lineJoin = 'round'; ctx.beginPath();
         s.pts.forEach(function (p, i) { if (i) ctx.lineTo(X(i), Y(p.g)); else ctx.moveTo(X(i), Y(p.g)); }); ctx.stroke();
@@ -558,11 +566,9 @@
         });
       }
       // 후기 전문
-      var bx = M, by = 1070, bw = W - 2 * M, bh = 660;
       ctx.fillStyle = '#fff'; rrect(ctx, bx, by, bw, bh, 36); ctx.fill(); ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke();
-      ctx.fillStyle = RED; ctx.fillRect(bx, by + 60, 10, bh - 120);
-      var tx = bx + 70, tw = bw - 130, ty = by + 70, th = bh - 140, lh = 1.55;
-      var ft = fitText(ctx, review, tw, th, 64, 34, '700', lh);
+      ctx.fillStyle = RED; ctx.fillRect(bx, by + 50, 10, bh - 100);
+      var tx = bx + 64, ty = by + 55, th = bh - 110;
       ctx.font = '700 ' + ft.fs + 'px ' + FONT; ctx.fillStyle = INK; ctx.textAlign = 'left';
       var top = ty + (th - ft.lines.length * ft.fs * lh) / 2;
       ft.lines.forEach(function (ln, i) { ctx.fillText(ln, tx, top + ft.fs * (i * lh + 1.12)); });
