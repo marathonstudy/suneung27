@@ -62,7 +62,7 @@
   $('pw').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
 
   function load() {
-    return rpc('survey_admin_data', { p_token: token }).then(function (d) { D = d; render(); if (UI.detail != null) renderDetail(); })
+    return rpc('survey_admin_data', { p_token: token }).then(function (d) { D = d; render(); if (UI.detail != null) renderDetail(); smsPoll(); })
       .catch(function (e) { $('view').innerHTML = '<div class="panel">불러오지 못했습니다: ' + esc(e.message) + '</div>'; });
   }
   $('reload').onclick = function () { load().then(function () { toast('새로 불러왔습니다'); }); };
@@ -227,8 +227,7 @@
         } else if (r.status === 'rejected') {
           act = '<span class="badge b-st-rejected">반려</span> <button class="mini" data-pd="' + r.id + '">대기로</button>';
         } else {
-          act = '<span class="badge b-st-approved">승인 · ' + esc(g ? g.label || ('#' + g.id) : '') + '</span>' +
-            (r.notified_at ? '<br><span class="small muted">문자 안내 완료 ' + fmtTime(r.notified_at) + '</span>' : '<br><span class="small" style="color:var(--warn)">문자 안내 전</span>');
+          act = '<span class="badge b-st-approved">승인 · ' + esc(g ? g.label || ('#' + g.id) : '') + '</span><br>' + smsLine(r, true);
         }
         h += '<tr data-name="' + esc(nk(r.name)) + '"' + (r.status === 'rejected' ? ' class="dim"' : '') + '>' +
           '<td class="nowrap c-name" data-l="이름"><button class="nm-link" data-detail="' + r.id + '" title="상세 보기">' + esc(r.name) + '</button></td>' +
@@ -271,6 +270,7 @@
     });
     root.querySelectorAll('[data-rj]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-rj'))], 'rejected'); }; });
     root.querySelectorAll('[data-pd]').forEach(function (b) { b.onclick = function () { setStatus([Number(b.getAttribute('data-pd'))], 'pending'); }; });
+    root.querySelectorAll('[data-sr]').forEach(function (b) { b.onclick = function () { b.disabled = true; smsSend([Number(b.getAttribute('data-sr'))]); }; });
   }
   function qMatch(r) { var q = nk(UI.q || ''); return !q || nk(r.name).indexOf(q) >= 0; }
   function applySearch() {
@@ -345,7 +345,7 @@
       }).join('') : '<p class="small muted">명단에 같은 이름 없음</p>') + '</section>';
     h += '<section><h4>기프티콘</h4>' +
       row('지급', g ? '지급됨 · ' + esc(g.label || '#' + g.id) + ' · ' + (g.assigned_at ? new Date(g.assigned_at).toLocaleString('ko-KR') : '') : '<span class="muted">아직 지급 안 함</span>') +
-      row('문자 안내', r.notified_at ? '완료 · ' + new Date(r.notified_at).toLocaleString('ko-KR') : '<span class="muted">안 함</span>') + '</section>';
+      row('문자 안내', r.status === 'approved' ? smsLine(r, false) : '<span class="muted">안 함</span>') + '</section>';
     el.innerHTML = '<div class="dpanel">' + h + '</div>';
     el.hidden = false; document.body.classList.add('detail-open');
     el.querySelector('.dpanel').scrollTop = 0;
@@ -368,9 +368,32 @@
   function err(e) { toast('오류: ' + (e && e.message || e)); }
   function approve(ids) {
     rpc('survey_admin_approve', { p_token: token, p_ids: ids }).then(function (d) {
-      toast('승인 ' + d.approved + '명' + (d.no_stock ? ' · 재고 없어 못 한 ' + d.no_stock + '명' : ''));
+      toast('승인 ' + d.approved + '명' + (d.no_stock ? ' · 재고 없어 못 한 ' + d.no_stock + '명' : '') + (d.sms ? ' · 문자 ' + d.sms + '통 보내는 중' : ''));
       return load();
     }).catch(err);
+  }
+  /* ---------- 승인 안내 문자 (솔라피 · 서버에서 보냄) ---------- */
+  function smsOn() { return D && D.settings && D.settings.sms_auto !== undefined; }   // 추가_승인문자.sql 설치됨
+  function smsLine(r, short) {
+    var when = function (x) { return short ? fmtTime(x) : new Date(x).toLocaleString('ko-KR'); };
+    var again = '<button class="mini" data-sr="' + r.id + '">다시 보내기</button>';
+    if (r.sms_status === 'sent') return '<span class="small muted">문자 안내 완료 ' + when(r.sms_sent_at || r.notified_at) + '</span>';
+    if (r.sms_status === 'sending') return '<span class="small" style="color:var(--warn)">문자 보내는 중…</span>';
+    if (r.sms_status === 'failed') return '<span class="badge b-warn" title="' + esc(r.sms_error || '') + '">문자 실패</span>' + (short ? '<br>' : ' ') + again +
+      (short ? '' : '<div class="small muted">' + esc(r.sms_error || '') + '</div>') +
+      (r.notified_at ? (short ? '<br>' : '') + '<span class="small muted">문자 안내 완료(엑셀) ' + when(r.notified_at) + '</span>' : '');
+    var base = r.notified_at ? '<span class="small muted">문자 안내 완료 ' + when(r.notified_at) + '</span>' : '<span class="small" style="color:var(--warn)">문자 안내 전</span>';
+    return base + (smsOn() && D.settings.sms_ready && r.phone ? ' <button class="mini" data-sr="' + r.id + '">문자 보내기</button>' : '');
+  }
+  function smsSend(ids) {
+    return rpc('survey_admin_sms_send', { p_token: token, p_ids: ids }).then(function (d) {
+      toast(d.queued ? '문자 ' + d.queued + '통 보내는 중' : '문자를 보내지 못했습니다'); return load();
+    }).catch(err);
+  }
+  function smsPoll() {
+    clearTimeout(smsPoll.t);
+    var busy = D && D.responses.some(function (r) { return r.sms_status === 'sending'; });
+    if (busy && (smsPoll.n = (smsPoll.n || 0) + 1) <= 20) smsPoll.t = setTimeout(load, 3000); else if (!busy) smsPoll.n = 0;
   }
   function setStatus(ids, st) {
     rpc('survey_admin_set_status', { p_token: token, p_ids: ids, p_status: st }).then(function () { toast(st === 'rejected' ? '반려했습니다' : '대기로 돌렸습니다'); return load(); }).catch(err);
@@ -717,15 +740,23 @@
     v.innerHTML = '<div class="panel"><h3>설정</h3>' +
       '<div class="field-row"><label>기프티콘 이름</label><input id="sglabel" value="' + esc(D.settings.gift_label) + '" placeholder="메가커피"><span class="small muted">시작 화면 「1분 설문 · 완료하면 ○○ 기프티콘 증정」</span></div>' +
       '<div class="field-row"><label>설문 주소</label><input id="surl" value="' + esc(D.settings.survey_url) + '" placeholder="' + esc(surveyUrl()) + '"><span class="small muted">문자 안내 문구에 들어갑니다 (비우면 지금 주소)</span></div>' +
+      (smsOn() ? '<div class="field-row"><label>승인 시 자동 문자</label><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="ssms"' + (D.settings.sms_auto ? ' checked' : '') + '> 켜기</label>' +
+        '<span class="small muted">승인하면 그 학생에게 솔라피로 기프티콘 안내 문자 1통 · ' + (D.settings.sms_ready ? '솔라피 키 등록됨' : '<b style="color:var(--red)">솔라피 키 없음</b>') + '</span></div>' : '') +
       '<div class="field-row"><label>새 비밀번호</label><input id="snpw" type="password" placeholder="바꿀 때만 · 8자 이상"><span class="small muted">바꾸면 모든 로그인이 끊깁니다</span></div>' +
       '<div class="toolbar"><button class="mini red" id="ssave">저장</button><button class="mini" id="slogout">로그아웃</button></div></div>';
     $('ssave').onclick = function () {
       var np = $('snpw').value;
       if (np && np.length < 8) return toast('비밀번호는 8자 이상');
-      rpc('survey_admin_set_settings', { p_token: token, p: { gift_label: $('sglabel').value, survey_url: $('surl').value.trim(), new_password: np } })
+      var ps = { gift_label: $('sglabel').value, survey_url: $('surl').value.trim(), new_password: np };
+      if ($('ssms')) ps.sms_auto = $('ssms').checked;
+      rpc('survey_admin_set_settings', { p_token: token, p: ps })
         .then(function () { if (np) { toast('비밀번호를 바꿨습니다. 다시 로그인해 주세요'); return logout(); } toast('저장했습니다'); return load(); }).catch(err);
     };
     $('slogout').onclick = logout;
+    if ($('ssms')) $('ssms').onchange = function () {
+      var on = this.checked;
+      rpc('survey_admin_set_settings', { p_token: token, p: { sms_auto: on } }).then(function () { toast('승인 시 자동 문자 ' + (on ? '켬' : '끔')); return load(); }).catch(err);
+    };
   }
 
   /* ---------- 시작 ---------- */
