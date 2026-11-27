@@ -349,7 +349,7 @@
     h += '<section><h4>만족도 · 도움된 부분</h4>' + row('만족도', r.satisfaction ? r.satisfaction + '점 / 5' : '-') +
       row('도움', (r.helpful || []).length ? (r.helpful || []).map(function (x) { return '<span class="badge b-no">' + esc(x) + '</span>'; }).join(' ') : '-') + '</section>';
     h += '<section><h4>수강 후기' + laterTag(r.review_added_at) + '</h4><div class="dtext">' + (r.review ? esc(r.review) : '<span class="muted">없음</span>') + '</div></section>';
-    h += '<section><h4>종현샘께 한마디' + laterTag(r.message_added_at) + '</h4><div class="dtext">' + (r.message ? esc(r.message) : '<span class="muted">없음</span>') + '</div></section>';
+    h += '<section><h4>종현샘께 한마디' + laterTag(r.message_added_at) + '</h4><div class="dtext">' + (r.message ? esc(r.message) : '<span class="muted">없음</span>') + '</div>' + hlPicker(r) + '</section>';
     h += '<section><h4>명단 대조</h4><div>' + b.html + '</div>' +
       (rosterRows.length ? rosterRows.map(function (x) {
         return '<div class="droster"><b>' + esc(x.name) + '</b> ' + esc(fmtPhone(x.phone)) + ' <span class="badge ' + (x.status === '정상' ? 'b-ok' : 'b-chk') + '">' + esc(x.status) + '</span>' +
@@ -368,6 +368,7 @@
     el.querySelector('[data-dclose]').onclick = closeDetail;
     var ri = el.querySelector('[data-reply]');
     if (ri) ri.oninput = function () { replySet(Number(ri.getAttribute('data-reply')), ri.value); };
+    hlBind(el, r);
   }
   document.addEventListener('keydown', function (e) {
     if (UI.detail == null || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
@@ -423,22 +424,28 @@
   }
   function stamp() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); }
 
-  /* ============ 인스타 스토리 이미지 (학생 1명 = 1장, 1080×1920 PNG) ============
-     등급이 오른 학생 = CASE(▲배지 + 성적 한 줄), 아닌 학생 = VOICE(등급·점수 없이 시작 시점·도움 태그·별점).
-     가운데는 「설문 제출 답변 카드」 — 후기는 학생 원문 그대로(고치거나 꾸미지 않음).
-     휴대폰 번호 · 「종현샘께 한마디」는 절대 쓰지 않는다. */
+  /* ============ 인스타 스토리 이미지 (1080×1920 PNG) ============
+     1장(후기 있을 때): 위쪽 = CASE(N등급 상승! · 징검다리 배지 · 마라토니) / VOICE(함께 달린 기간 · 별점 · 도움 칩 · 마라부기), 아래 = 「설문 제출 답변 카드」(후기 원문 그대로).
+     2장(한마디 있을 때): 「종현쌤에게 보낸 메시지」 대화방 — 한마디 원문 그대로 말풍선, 관리자가 고른 문장만 형광펜.
+     CASE = 수능이 출발점보다 좋고, 9모를 봤다면 수능이 9모보다 나쁘지 않을 때. 그 밖은 VOICE(등급·점수 없음).
+     휴대폰 번호는 어느 장에도 절대 쓰지 않는다. */
   var STORY_W = 1080, STORY_H = 1920;
   var FONT = '"Pretendard Variable", Pretendard, "Malgun Gothic", "Apple SD Gothic Neo", "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
-  var CASE_KEY = 'survey_story_case', VOICE_KEY = 'survey_story_voice', REPLY_KEY = 'survey_story_reply';
+  var CASE_KEY = 'survey_story_case', VOICE_KEY = 'survey_story_voice', REPLY_KEY = 'survey_story_reply', HL_KEY = 'survey_story_hl';
   function numLast(kind) { return Number(localStorage.getItem(kind === 'VOICE' ? VOICE_KEY : CASE_KEY) || 0) || 0; }
   function numSet(kind, n) { localStorage.setItem(kind === 'VOICE' ? VOICE_KEY : CASE_KEY, String(n)); }
-  // 종현쌤 답글: DB에 안 넣고 이 브라우저에만 { 응답id: 글 }
-  function replyMap() { try { return JSON.parse(localStorage.getItem(REPLY_KEY) || '{}') || {}; } catch (e) { return {}; } }
-  function replyOf(r) { return String(replyMap()[r.id] || '').trim(); }
-  function replySet(id, t) { var m = replyMap(); t = String(t || '').trim(); if (t) m[id] = t; else delete m[id]; localStorage.setItem(REPLY_KEY, JSON.stringify(m)); }
+  function lsMap(k) { try { return JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) { return {}; } }
+  // 종현쌤 답글 · 형광펜 문장: DB에 안 넣고 이 브라우저에만 { 응답id: … }
+  function replyOf(r) { return String(lsMap(REPLY_KEY)[r.id] || '').trim(); }
+  function replySet(id, t) { var m = lsMap(REPLY_KEY); t = String(t || '').trim(); if (t) m[id] = t; else delete m[id]; localStorage.setItem(REPLY_KEY, JSON.stringify(m)); }
+  function hlOf(r) { var a = lsMap(HL_KEY)[r.id]; return Array.isArray(a) ? a : []; }
+  function hlSet(id, arr) { var m = lsMap(HL_KEY); if (arr && arr.length) m[id] = arr; else delete m[id]; localStorage.setItem(HL_KEY, JSON.stringify(m)); }
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
   function maskO(name) { name = nk(name); return name ? name[0] + 'O'.repeat(Math.max(name.length - 1, 2)) : ''; }
   function hasReview(r) { return !!(r.review && String(r.review).trim()); }
+  function hasMsg(r) { return !!(r.message && String(r.message).trim()); }
+  function hasStory(r) { return hasReview(r) || hasMsg(r); }
+  function msgText(r) { return String(r.message || '').replace(/\r/g, '').trim(); }
   // 출발점: 학생이 고른 수강 전 등급. 없으면 6·9모 중 낮은 쪽.
   function storyInfo(r) {
     var p = preOf(r), m6 = gradeOf(r, 'm6').g, m9 = gradeOf(r, 'm9').g, sn = gradeOf(r, 'sn').g;
@@ -447,19 +454,36 @@
     if (m6 != null) pts.push({ l: '6모', g: m6 });
     if (m9 != null) pts.push({ l: '9모', g: m9 });
     if (sn != null) pts.push({ l: '수능', g: sn });
+    var startL = p.how === 'self' ? '수강 전' : (m9 == null || (m6 != null && m6 >= m9)) ? '6모' : '9모';
     // CASE: 수능이 출발점보다 좋고, 9모를 봤다면 수능이 9모보다 나쁘지 않을 때만 (▲는 출발점 대비)
     var up = p.g != null && sn != null && sn < p.g && (m9 == null || sn <= m9) ? p.g - sn : 0;
-    return { start: p.g, sn: sn, pts: pts, up: up, kind: up ? 'CASE' : 'VOICE' };
+    return { start: p.g, startL: startL, sn: sn, pts: pts, up: up, kind: up ? 'CASE' : 'VOICE' };
   }
-  function storyFile(r, no) {
-    var s = storyInfo(r);
-    return s.kind + pad2(no) + '_' + maskO(r.name) + (s.kind === 'CASE' ? '_▲' + s.up : '') + '.png';
-  }
-  var START_SAY = { sep_early: '9월 초부터 함께 달렸어요', sep_mid: '9월 중순부터 함께 달렸어요', oct: '10월부터 함께 달렸어요' };
+  function storyBase(r, no) { var s = storyInfo(r); return s.kind + pad2(no) + '_' + maskO(r.name) + (s.kind === 'CASE' ? '_▲' + s.up : ''); }
+  function storyFile(r, no) { return storyBase(r, no) + '.png'; }
+  function storyFileMsg(r, no) { return storyBase(r, no) + '_메시지.png'; }
+  var RAN = {   // 수강 시작 → 수능(11월)까지 함께 달린 기간
+    sep_early: ['9월부터 함께 달린', '3개월'], sep_mid: ['9월 중순부터 함께 달린', '2개월 반'], oct: ['10월부터 함께 달린', '2개월']
+  };
   function submitAt(r) {
     var t = r.review_added_at || r.created_at; if (!t) return '';
     var d = new Date(t); if (isNaN(d)) return '';
     return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ' 제출';
+  }
+  // 한마디 문장 나누기: 줄바꿈, 또는 . ! ? … ~ 뒤에 띄어쓰기/끝. 원문 위치(s, e)를 그대로 돌려줌(내용은 안 바꿈)
+  function sentences(text) {
+    var out = [], st = 0, n = text.length, P = /[.!?…~]/;
+    function push(a, b) { while (a < b && /\s/.test(text[a])) a++; while (b > a && /\s/.test(text[b - 1])) b--; if (b > a) out.push({ s: a, e: b, t: text.slice(a, b) }); }
+    for (var i = 0; i < n; i++) {
+      if (text[i] === '\n') { push(st, i); st = i + 1; continue; }
+      if (P.test(text[i])) {
+        var j = i; while (j + 1 < n && P.test(text[j + 1])) j++;
+        if (j + 1 >= n || /\s/.test(text[j + 1])) { push(st, j + 1); st = j + 1; }
+        i = j;
+      }
+    }
+    push(st, n);
+    return out;
   }
   // keep-all 줄바꿈: 띄어쓰기에서만 자르고, 한 낱말이 한 줄보다 길 때만 글자 단위로 (빈 줄은 그대로)
   function wrapText(ctx, text, maxW) {
@@ -484,20 +508,39 @@
     while (lines.length && lines[lines.length - 1] === '') lines.pop();
     return lines;
   }
+  // 같은 줄바꿈이지만 원문 위치로: [{s, e}] — 줄 글 = text.slice(s, e) (띄어쓰기까지 원문 그대로)
+  function wrapR(ctx, text, s, e, maxW) {
+    var lines = [], ls = -1, le = -1, re = /\S+/g, m, W = function (a, b) { return ctx.measureText(text.slice(a, b)).width; };
+    re.lastIndex = s;
+    while ((m = re.exec(text)) && m.index < e) {
+      var ws = m.index, we = Math.min(m.index + m[0].length, e);
+      if (ls >= 0 && W(ls, we) <= maxW) { le = we; continue; }
+      if (ls >= 0) lines.push({ s: ls, e: le });
+      ls = ws; le = we;
+      while (W(ls, le) > maxW) {
+        var cs = Array.from(text.slice(ls, le)), off = cs[0].length, k = 1;
+        while (k < cs.length && W(ls, ls + off + cs[k].length) <= maxW) { off += cs[k].length; k++; }
+        lines.push({ s: ls, e: ls + off }); ls += off;
+      }
+    }
+    if (ls >= 0) lines.push({ s: ls, e: le });
+    return lines;
+  }
   function rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
   function seeded(seed) { var s = (seed >>> 0) || 1; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
-  // 손으로 그은 형광펜: 글자 아래쪽 절반, 가장자리가 살짝 흔들리고 약간 기울어짐
-  function highlighter(ctx, x0, x1, yMid, h, rnd) {
+  // 손으로 그은 형광펜: 가장자리가 살짝 흔들리고 약간 기울어짐 (ext = 글자 밖으로 삐져나오는 정도)
+  function highlighter(ctx, x0, x1, yMid, h, rnd, ext) {
+    ext = ext == null ? 16 : ext;
     ctx.save();
     ctx.translate((x0 + x1) / 2, yMid); ctx.rotate(-0.012);
-    var L = -(x1 - x0) / 2 - 14, R = (x1 - x0) / 2 + 18, n = 14, top = [], bot = [], i;
-    for (i = 0; i <= n; i++) { var x = L + (R - L) * i / n; top.push([x, -h / 2 + (rnd() - 0.5) * 7]); bot.push([x + (rnd() - 0.5) * 6, h / 2 + (rnd() - 0.5) * 9]); }
-    ctx.beginPath(); ctx.moveTo(top[0][0] + 6, top[0][1]);
+    var L = -(x1 - x0) / 2 - ext, R = (x1 - x0) / 2 + ext * 1.2, n = Math.max(4, Math.round((R - L) / 40)), top = [], bot = [], i, j = Math.min(1, h / 50);
+    for (i = 0; i <= n; i++) { var x = L + (R - L) * i / n; top.push([x, -h / 2 + (rnd() - 0.5) * 8 * j]); bot.push([x + (rnd() - 0.5) * 6 * j, h / 2 + (rnd() - 0.5) * 10 * j]); }
+    ctx.beginPath(); ctx.moveTo(top[0][0] + 4, top[0][1]);
     top.forEach(function (p) { ctx.lineTo(p[0], p[1]); });
-    ctx.quadraticCurveTo(R + 10, 0, bot[n][0] - 4, bot[n][1]);
+    ctx.quadraticCurveTo(R + 8 * j, 0, bot[n][0] - 3, bot[n][1]);
     for (i = n; i >= 0; i--) ctx.lineTo(bot[i][0], bot[i][1]);
-    ctx.quadraticCurveTo(L - 6, 2, top[0][0] + 6, top[0][1]);
-    ctx.closePath(); ctx.fillStyle = 'rgba(255, 221, 64, 0.62)'; ctx.fill();
+    ctx.quadraticCurveTo(L - 5 * j, 2, top[0][0] + 4, top[0][1]);
+    ctx.closePath(); ctx.fillStyle = 'rgba(255, 221, 64, 0.66)'; ctx.fill();
     ctx.restore();
   }
   var IMG = {};
@@ -508,111 +551,157 @@
   }
   function storyLoadFonts(text) {
     if (!document.fonts || !document.fonts.load) return Promise.resolve();
-    return Promise.all([400, 500, 600, 700, 800].map(function (w) { return document.fonts.load(w + ' 40px "Pretendard Variable"', text); }))
+    return Promise.all([400, 500, 600, 700, 800, 900].map(function (w) { return document.fonts.load(w + ' 40px "Pretendard Variable"', text); }))
       .then(function () { return document.fonts.ready; }).catch(function () {});
   }
+  function paper(ctx, rnd, base, dark) {
+    ctx.fillStyle = base; ctx.fillRect(0, 0, STORY_W, STORY_H);
+    for (var k = 0; k < 9000; k++) {
+      ctx.fillStyle = rnd() < 0.5 ? dark : 'rgba(255, 255, 255, 0.35)';
+      ctx.fillRect(rnd() * STORY_W, rnd() * STORY_H, 1 + rnd() * 2, 1 + rnd() * 2);
+    }
+  }
+  function fitFont(ctx, text, weight, maxW, big, small) {
+    for (var f = big; f > small; f -= 2) { ctx.font = weight + ' ' + f + 'px ' + FONT; if (ctx.measureText(text).width <= maxW) return f; }
+    return small;
+  }
+  function toBlob(cv) { return new Promise(function (res) { cv.toBlob(res, 'image/png'); }); }
+  var RED = '#B3191F', DEEP = '#8E0F15', INK = '#26221E', MUTED = '#7A7168', SOFT = '#A69D92', LINE = '#ECE6DD';
+  function mix(a, b, t) {   // 색 섞기 '#rrggbb'
+    var p = function (c, i) { return parseInt(c.slice(1 + i * 2, 3 + i * 2), 16); };
+    return '#' + [0, 1, 2].map(function (i) { var v = Math.round(p(a, i) + (p(b, i) - p(a, i)) * t); return (v < 16 ? '0' : '') + v.toString(16); }).join('');
+  }
+
+  // ---------- 1장: 위쪽(CASE/VOICE) + 후기 카드 ----------
   function drawStory(r, no) {
-    var s = storyInfo(r), W = STORY_W, H = STORY_H;
-    var RED = '#B3191F', INK = '#26221E', MUTED = '#7A7168', SOFT = '#A69D92', LINE = '#ECE6DD';
+    var s = storyInfo(r), W = STORY_W, H = STORY_H, L = 70;
     var title = '2027 수능 · 마라톤 ' + s.kind + ' ' + pad2(no);
     var name = mask(nk(r.name));
     var meta = [(r.courses || []).map(function (c) { return COURSE[c] || c; }).join('/'), r.subject ? SUBJ_S[r.subject] : ''].filter(Boolean).join(' · ');
-    var when = submitAt(r), review = String(r.review || '').trim(), reply = replyOf(r);
-    var startSay = START_SAY[r.start_when] || '', sat = Number(r.satisfaction) || 0, tags = (r.helpful || []).slice();
-    var gradeLine = s.pts.map(function (p) { return p.l + ' ' + p.g; }).join(' · ');
-    var allText = title + name + meta + when + review + reply + startSay + tags.join('') + gradeLine + '▲등급가채점수강후기종현쌤마라톤스터디★☆0123456789';
-    return Promise.all([storyLoadFonts(allText), loadImg('assets/rabbit.png'), loadImg('assets/turtle.png')]).then(function (got) {
-      var rabbit = got[1], turtle = got[2];
+    var when = submitAt(r), review = String(r.review || '').trim(), reply = hasMsg(r) ? '' : replyOf(r);   // 한마디(2장)가 있으면 답글은 2장에
+    var ran = RAN[r.start_when] || ['수능 날까지', '함께 완주'], sat = Number(r.satisfaction) || 0, tags = (r.helpful || []).slice();
+    var allText = title + name + meta + when + review + reply + ran.join('') + tags.join('') + s.pts.map(function (p) { return p.l; }).join('') + '등급상승!→가채점수강후기종현쌤마라톤스터디★0123456789';
+    var mascotSrc = s.kind === 'CASE' ? 'assets/rabbit_l.png' : 'assets/turtle_l.png';
+    return Promise.all([storyLoadFonts(allText), loadImg(mascotSrc)]).then(function (got) {
+      var mascot = got[1];
       var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
       var ctx = cv.getContext('2d'); ctx.textBaseline = 'alphabetic';
-      var rnd = seeded(r.id * 7919 + 17);
-      // 바탕: 연한 종이 + 잔 점(질감)
-      ctx.fillStyle = '#F6F1E9'; ctx.fillRect(0, 0, W, H);
-      for (var k = 0; k < 9000; k++) {
-        ctx.fillStyle = rnd() < 0.5 ? 'rgba(120, 96, 66, 0.05)' : 'rgba(255, 255, 255, 0.35)';
-        ctx.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2, 1 + rnd() * 2);
-      }
-      // 맨 위 · 맨 아래 작은 글
-      ctx.textAlign = 'center';
-      ctx.font = '600 30px ' + FONT; ctx.fillStyle = MUTED; ctx.fillText(title, W / 2, 118);
-      ctx.font = '700 30px ' + FONT; ctx.fillStyle = RED; ctx.fillText('마라톤 스터디', W / 2, 1852);
-      // 구석 캐릭터
-      var mh = 190;
-      if (rabbit) ctx.drawImage(rabbit, 46, H - 34 - mh, mh * rabbit.naturalWidth / rabbit.naturalHeight, mh);
-      if (turtle) { var tw2 = mh * turtle.naturalWidth / turtle.naturalHeight; ctx.drawImage(turtle, W - 46 - tw2, H - 34 - mh, tw2, mh); }
-
-      // 위쪽: CASE = ▲배지 + 성적 한 줄 / VOICE = 시작 시점 + 별점 + 도움 태그
-      function head(ctx, y0, rnd) {
-      var y = y0, info = { head: 0 }; ctx.textAlign = 'center';
+      var rnd = seeded(r.id * 7919 + 17), chk = { headGap: 999 };
+      paper(ctx, rnd, '#F6F1E9', 'rgba(120, 96, 66, 0.05)');
+      // 위쪽은 투명한 겹 그림에 그려 두었다가, 카드 크기를 안 뒤 세로 위치(dy)를 맞춰 붙인다
+      var main = ctx, layer = document.createElement('canvas'); layer.width = W; layer.height = H;
+      ctx = layer.getContext('2d'); ctx.textBaseline = 'alphabetic';
+      // 큰 캐릭터(오른쪽 위)
+      var mh = s.kind === 'CASE' ? 500 : 470, mw = mascot ? mh * mascot.naturalWidth / mascot.naturalHeight : 0, mx = W - 44 - mw, my = s.kind === 'CASE' ? 112 : 124;
+      var TW0 = mx - 24 - L;   // 캐릭터 왼쪽까지 글 폭
+      var used = function (x1) { chk.headGap = Math.min(chk.headGap, mx - x1); };
+      // 작은 라벨
+      ctx.textAlign = 'left'; ctx.font = '700 30px ' + FONT; ctx.fillStyle = RED; ctx.fillText(title, L, 118); used(L + ctx.measureText(title).width);
+      var y;
       if (s.kind === 'CASE') {
-        var bt = '▲' + s.up + '등급'; ctx.font = '800 150px ' + FONT;
-        var bw = ctx.measureText(bt).width, by = y + 150;
-        highlighter(ctx, W / 2 - bw / 2, W / 2 + bw / 2, by - 38, 66, rnd);
-        ctx.fillStyle = RED; ctx.fillText(bt, W / 2, by);
-        info.head = bw;
-        if (gradeLine) {
-          ctx.font = '500 36px ' + FONT; var gw = ctx.measureText(gradeLine).width;
-          var hasSn = s.sn != null; ctx.font = '500 24px ' + FONT; var kw = hasSn ? ctx.measureText(' 가채점').width : 0;
-          var gx = W / 2 - (gw + kw) / 2, gy = by + 84;
-          ctx.textAlign = 'left'; ctx.font = '500 36px ' + FONT; ctx.fillStyle = MUTED; ctx.fillText(gradeLine, gx, gy);
-          if (hasSn) { ctx.font = '500 24px ' + FONT; ctx.fillStyle = SOFT; ctx.fillText(' 가채점', gx + gw, gy); }
-          ctx.textAlign = 'center'; info.gradeW = gw + kw;
-          y = gy + 34;
-        } else y = by + 40;
+        // 큰 헤드라인 두 줄: 「N등급」 / 「상승!」 (숫자 딥레드) + 형광펜
+        var num = String(s.up), l1b = '등급', l2 = '상승!';
+        var hf = 210; ctx.font = '900 ' + hf + 'px ' + FONT;
+        while (hf > 120 && Math.max(ctx.measureText(num + l1b).width, ctx.measureText(l2).width) > TW0) { hf -= 4; ctx.font = '900 ' + hf + 'px ' + FONT; }
+        var b1 = 150 + Math.round(hf * 0.84), b2 = b1 + Math.round(hf * 0.98);
+        var nw = ctx.measureText(num).width, w1 = ctx.measureText(num + l1b).width, w2 = ctx.measureText(l2).width;
+        highlighter(ctx, L, L + w2, b2 - hf * 0.2, hf * 0.32, rnd, 12);
+        ctx.fillStyle = DEEP; ctx.fillText(num, L, b1); ctx.fillStyle = INK; ctx.fillText(l1b, L + nw, b1);
+        ctx.fillText(l2, L, b2); used(L + Math.max(w1, w2) + 12);
+        // 한 줄: 수강 전 5등급 → 수능 3등급 가채점
+        var sumA = s.startL + ' ' + s.start + '등급  →  수능 ' + s.sn + '등급', sf = fitFont(ctx, sumA + ' 가채점', '700', TW0, 42, 26);
+        ctx.font = '700 ' + sf + 'px ' + FONT; var sa = ctx.measureText(sumA).width, sb2 = b2 + Math.round(sf * 1.9);
+        ctx.fillStyle = INK; ctx.fillText(sumA, L, sb2);
+        ctx.font = '600 ' + Math.round(sf * 0.6) + 'px ' + FONT; ctx.fillStyle = SOFT; ctx.fillText(' 가채점', L + sa, sb2); used(L + sa + ctx.measureText(' 가채점').width);
+        // 징검다리 배지 (오른 구간일수록 진하게)
+        var n = s.pts.length, R = 64, top = Math.max(sb2 + 46, my + mh + 26), cy = top + R;
+        var span = Math.min(W - 2 * L - 2 * R, (n - 1) * 300), x0 = (W - span) / 2;
+        var cx = function (i) { return n === 1 ? W / 2 : x0 + span * i / (n - 1); };
+        var gs = s.pts.map(function (p) { return p.g; }), worst = Math.max.apply(null, gs), best = Math.min.apply(null, gs);
+        var tone = function (g) { return worst === best ? 1 : (worst - g) / (worst - best); };
+        for (var i = 0; i < n - 1; i++) {
+          var a = cx(i) + R + 16, bb = cx(i + 1) - R - 16, upSeg = s.pts[i + 1].g < s.pts[i].g, col = upSeg ? RED : '#C9BCAE';
+          ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 6; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(a, cy); ctx.lineTo(bb - 8, cy); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(bb, cy); ctx.lineTo(bb - 20, cy - 13); ctx.lineTo(bb - 20, cy + 13); ctx.closePath(); ctx.fill();
+        }
+        s.pts.forEach(function (p, i) {
+          var t = tone(p.g), fill = mix('#F8E1DE', DEEP, t);
+          ctx.save(); ctx.shadowColor = 'rgba(80, 30, 20, 0.16)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+          ctx.beginPath(); ctx.arc(cx(i), cy, R, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); ctx.restore();
+          ctx.textAlign = 'center'; ctx.fillStyle = t > 0.45 ? '#fff' : DEEP;
+          ctx.font = '800 62px ' + FONT; var gw = ctx.measureText(String(p.g)).width; ctx.font = '700 24px ' + FONT; var uw = ctx.measureText('등급').width;
+          var gx = cx(i) - (gw + 4 + uw) / 2;
+          ctx.textAlign = 'left'; ctx.font = '800 62px ' + FONT; ctx.fillText(String(p.g), gx, cy + 22);
+          ctx.font = '700 24px ' + FONT; ctx.fillText('등급', gx + gw + 4, cy + 22);
+          ctx.textAlign = 'center'; ctx.font = '700 30px ' + FONT; ctx.fillStyle = INK; ctx.fillText(p.l, cx(i), cy + R + 46);
+          if (p.l === '수능') { ctx.font = '600 21px ' + FONT; ctx.fillStyle = SOFT; ctx.fillText('가채점', cx(i), cy + R + 74); }
+        });
+        chk.badgeW = span + 2 * R; chk.badgeTop = top; chk.mascotBottom = my + mh;
+        y = cy + R + 80;
       } else {
-        y = y0;
-        if (startSay) {
-          ctx.font = '800 64px ' + FONT; var sw = ctx.measureText(startSay).width, sy = y + 64;
-          var hiW = ctx.measureText('함께 달렸어요').width;
-          highlighter(ctx, W / 2 + sw / 2 - hiW, W / 2 + sw / 2, sy - 16, 30, rnd);
-          ctx.fillStyle = INK; ctx.fillText(startSay, W / 2, sy);
-          info.head = sw; y = sy + 24;
+        // 큰 헤드라인: 「9월부터 함께 달린」 / 「3개월」 + 형광펜
+        var f1 = fitFont(ctx, ran[0], '800', TW0, 68, 40);
+        ctx.font = '800 ' + f1 + 'px ' + FONT; var c1 = 158 + Math.round(f1 * 0.95);
+        ctx.fillStyle = INK; ctx.fillText(ran[0], L, c1); used(L + ctx.measureText(ran[0]).width);
+        var f2 = fitFont(ctx, ran[1], '900', TW0, 220, 100);
+        ctx.font = '900 ' + f2 + 'px ' + FONT; var c2 = c1 + Math.round(f2 * 0.98), w2v = ctx.measureText(ran[1]).width;
+        highlighter(ctx, L, L + w2v, c2 - f2 * 0.2, f2 * 0.32, rnd, 12);
+        ctx.fillStyle = DEEP; ctx.fillText(ran[1], L, c2); used(L + w2v + 12);
+        y = c2 + 30;
+        if (sat) {   // 별점 크게
+          ctx.font = '400 92px ' + FONT;
+          var full = '★'.repeat(sat), empty = '★'.repeat(Math.max(0, 5 - sat)), fw = ctx.measureText(full).width, ew = ctx.measureText(empty).width;
+          ctx.fillStyle = '#E8A317'; ctx.fillText(full, L - 4, y + 92); ctx.fillStyle = '#DDD5C9'; ctx.fillText(empty, L - 4 + fw, y + 92);
+          var st = '만족도 ' + sat + ' / 5', sx = L - 4 + fw + ew + 22;
+          ctx.font = '700 30px ' + FONT; ctx.fillStyle = MUTED; ctx.fillText(st, sx, y + 80); used(sx + ctx.measureText(st).width);
+          y += 120;
         }
-        if (sat) {
-          ctx.font = '400 50px ' + FONT;
-          var full = '★'.repeat(sat), empty = '★'.repeat(Math.max(0, 5 - sat)), fw = ctx.measureText(full).width, ew = ctx.measureText(empty).width, sx = W / 2 - (fw + ew) / 2;
-          ctx.textAlign = 'left'; ctx.fillStyle = '#E8A317'; ctx.fillText(full, sx, y + 66); ctx.fillStyle = '#DDD5C9'; ctx.fillText(empty, sx + fw, y + 66);
-          ctx.textAlign = 'center'; y += 90;
-        }
-        if (tags.length) {
-          ctx.font = '500 28px ' + FONT;
-          var rows = [[]], rw = [0], maxRow = W - 180, gap = 14, padX = 24, th = 54;
-          tags.forEach(function (t) {
-            var w = ctx.measureText(t).width + padX * 2, i = rows.length - 1;
-            if (rows[i].length && rw[i] + gap + w > maxRow) { rows.push([]); rw.push(0); i++; }
-            rw[i] += (rows[i].length ? gap : 0) + w; rows[i].push({ t: t, w: w });
-          });
-          y += 16;
-          rows.forEach(function (row, i) {
-            var x = W / 2 - rw[i] / 2;
-            row.forEach(function (tg) {
-              ctx.fillStyle = 'rgba(255,255,255,0.75)'; rrect(ctx, x, y, tg.w, th, th / 2); ctx.fill();
-              ctx.strokeStyle = '#D9CFC2'; ctx.lineWidth = 2; ctx.stroke();
-              ctx.fillStyle = '#5C544B'; ctx.fillText(tg.t, x + tg.w / 2, y + 37);
-              x += tg.w + gap;
+        if (tags.length) {   // 도움된 부분 칩 (2줄이 되도록 크기 맞춤)
+          var top2 = Math.max(y + 10, my + mh + 20), rowsOf = function (tf) {
+            ctx.font = '600 ' + tf + 'px ' + FONT;
+            var rows = [[]], rw = [0], maxRow = W - 2 * L, gap = 14, px = Math.round(tf * 0.85);
+            tags.forEach(function (t) {
+              var w = ctx.measureText(t).width + px * 2, i = rows.length - 1;
+              if (rows[i].length && rw[i] + gap + w > maxRow) { rows.push([]); rw.push(0); i++; }
+              rw[i] += (rows[i].length ? gap : 0) + w; rows[i].push({ t: t, w: w });
             });
-            y += th + 12;
+            return { rows: rows, rw: rw, gap: gap, tf: tf };
+          };
+          var tf = 34, ro = rowsOf(tf);
+          while (ro.rows.length > 2 && tf > 24) { tf -= 2; ro = rowsOf(tf); }
+          var th = Math.round(tf * 2), yy = top2;
+          ro.rows.forEach(function (row) {
+            var x = L;
+            row.forEach(function (tg) {
+              ctx.fillStyle = '#FFFFFF'; rrect(ctx, x, yy, tg.w, th, th / 2); ctx.fill();
+              ctx.strokeStyle = '#E2D7CA'; ctx.lineWidth = 2; ctx.stroke();
+              ctx.fillStyle = '#4E463E'; ctx.textAlign = 'center'; ctx.font = '600 ' + tf + 'px ' + FONT; ctx.fillText(tg.t, x + tg.w / 2, yy + th / 2 + tf * 0.36);
+              x += tg.w + ro.gap;
+            });
+            yy += th + 12;
           });
-          info.tagRows = rows.length; info.tagW = Math.max.apply(null, rw);
+          ctx.textAlign = 'left';
+          chk.tagW = Math.max.apply(null, ro.rw); chk.tagRows = ro.rows.length; chk.tagTop = top2; chk.mascotBottom = my + mh;
+          y = yy;
         }
+        y = Math.max(y, my + mh);
       }
-      return { y: y, info: info };
-      }
-      // 위쪽 높이를 먼저 재고(빈 캔버스에 그려 봄), 위쪽+카드+답글 전체를 세로 가운데에
-      var headH = head(document.createElement('canvas').getContext('2d'), 0, seeded(1)).y, GAP = headH ? 70 : 0;
-      var TOP0 = 165, BOT = 1650, TOP = TOP0 + headH + GAP;   // BOT 아래는 캐릭터·「마라톤 스터디」
+      if (mascot) ctx.drawImage(mascot, mx, my, mw, mh);
+      var headEnd = y;
+      ctx = main;
+      ctx.textAlign = 'center'; ctx.font = '700 30px ' + FONT; ctx.fillStyle = RED; ctx.fillText('마라톤 스터디', W / 2, 1862);
 
-      // 답글 크기 먼저
-      var CX = 100, CW = W - 200, PAD = 56, TW = CW - PAD * 2, rp = null;
+      // 아래: 답글 크기 → 후기 카드 크기 → 남은 자리 가운데
+      var BOT = 1780, TOP = headEnd + 56, CX = 100, CW = W - 200, PAD = 56, TW = CW - PAD * 2, rp = null;
       if (reply) {
         ctx.font = '400 32px ' + FONT;
         var rl = wrapText(ctx, reply, CW - 180 - 64);
         if (rl.length > 4) { rl = rl.slice(0, 4); rl[3] = rl[3].replace(/.$/, '') + '…'; }
         var rww = Math.max.apply(null, rl.map(function (l) { return ctx.measureText(l).width; }));
         rp = { lines: rl, w: Math.min(CW - 180, rww + 64), h: rl.length * 48 + 44 };
-        rp.total = 30 + 46 + 10 + rp.h;   // 간격 + 이름표 + 간격 + 말풍선
+        rp.total = 30 + 46 + 10 + rp.h;
       }
-      // 답변 카드: 머리(이름·제출 시각) 132 + 「수강 후기」 라벨 70 + 글 + 아래 여백 56
       var HEAD = 132, LAB = 70, FOOT = 56, avail = BOT - TOP - (rp ? rp.total : 0) - HEAD - LAB - FOOT;
       var fs, lh = 1.62, lines, cut = false;
       for (fs = 40; fs >= 22; fs -= 1) {
@@ -627,15 +716,13 @@
         while (last && ctx.measureText(last + '…').width > TW) last = Array.from(last).slice(0, -1).join('');
         lines[keepN - 1] = last.replace(/\s+$/, '') + '…'; cut = true;
       }
-      var textH = lines.length * fs * lh, CH = HEAD + LAB + textH + FOOT;
-      var group = CH + (rp ? rp.total : 0), y0 = Math.round(TOP0 + Math.max(0, (BOT - TOP0 - headH - GAP - group) / 2.2));
-      var info = head(ctx, y0, rnd).info, CY = y0 + headH + GAP;
-
-      // 카드(휴대폰 화면 속 응답 한 건처럼)
+      var textH = lines.length * fs * lh, CH = HEAD + LAB + textH + FOOT, group = CH + (rp ? rp.total : 0);
+      var free = Math.max(0, BOT - TOP - group), dy = Math.round(Math.min(free * 0.3, 120));   // 남는 자리: 위로 조금(최대 120) · 사이 35% · 나머지 아래
+      ctx.drawImage(layer, 0, dy); headEnd += dy; TOP += dy;
+      var CY = Math.round(TOP + free * 0.35);
       ctx.save(); ctx.shadowColor = 'rgba(80, 56, 30, 0.13)'; ctx.shadowBlur = 44; ctx.shadowOffsetY = 14;
       ctx.fillStyle = '#FFFFFF'; rrect(ctx, CX, CY, CW, CH, 40); ctx.fill(); ctx.restore();
       ctx.strokeStyle = '#E7E0D6'; ctx.lineWidth = 1.5; rrect(ctx, CX, CY, CW, CH, 40); ctx.stroke();
-      // 머리: 동그라미 첫 글자 · 이름 · 강의/과목 | 제출 시각
       var ax = CX + PAD + 34, ay = CY + 70;
       ctx.fillStyle = '#F1E9DE'; ctx.beginPath(); ctx.arc(ax, ay, 34, 0, Math.PI * 2); ctx.fill();
       ctx.textAlign = 'center'; ctx.font = '600 30px ' + FONT; ctx.fillStyle = '#8A7C6C'; ctx.fillText(name.charAt(0), ax, ay + 11);
@@ -648,25 +735,146 @@
       ctx.font = '400 ' + fs + 'px ' + FONT; ctx.fillStyle = INK;
       var ty0 = CY + HEAD + LAB;
       lines.forEach(function (ln, i) { ctx.fillText(ln, CX + PAD, ty0 + fs * (i * lh + 1.12)); });
-
-      // 종현쌤 답글 (있을 때만)
       if (rp) {
         var ry = CY + CH + 30, rx = CX + 70;
-        ctx.font = '700 25px ' + FONT; var nw = ctx.measureText('종현쌤').width + 36;
-        ctx.fillStyle = RED; rrect(ctx, rx, ry, nw, 46, 23); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText('종현쌤', rx + nw / 2, ry + 32);
+        ctx.font = '700 25px ' + FONT; var nmw = ctx.measureText('종현쌤').width + 36;
+        ctx.fillStyle = RED; rrect(ctx, rx, ry, nmw, 46, 23); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText('종현쌤', rx + nmw / 2, ry + 32);
         var bx = rx, byy = ry + 46 + 10;
         ctx.save(); ctx.shadowColor = 'rgba(80, 56, 30, 0.10)'; ctx.shadowBlur = 24; ctx.shadowOffsetY = 6;
-        ctx.fillStyle = '#FFF8E7'; ctx.beginPath(); ctx.moveTo(bx + 6, byy); ctx.arcTo(bx + rp.w, byy, bx + rp.w, byy + rp.h, 30); ctx.arcTo(bx + rp.w, byy + rp.h, bx, byy + rp.h, 30); ctx.arcTo(bx, byy + rp.h, bx, byy, 30); ctx.arcTo(bx, byy, bx + rp.w, byy, 6); ctx.closePath(); ctx.fill();   // 왼쪽 위만 각진 말풍선
+        ctx.fillStyle = '#FFF8E7'; ctx.beginPath(); ctx.moveTo(bx + 6, byy); ctx.arcTo(bx + rp.w, byy, bx + rp.w, byy + rp.h, 30); ctx.arcTo(bx + rp.w, byy + rp.h, bx, byy + rp.h, 30); ctx.arcTo(bx, byy + rp.h, bx, byy, 30); ctx.arcTo(bx, byy, bx + rp.w, byy, 6); ctx.closePath(); ctx.fill();
         ctx.restore();
         ctx.textAlign = 'left'; ctx.font = '400 32px ' + FONT; ctx.fillStyle = INK;
         rp.lines.forEach(function (ln, i) { ctx.fillText(ln, bx + 32, byy + 22 + 34 + i * 48); });
       }
-      var out = { kind: s.kind, fs: fs, lines: lines.length, cut: cut, top: TOP, cardTop: CY, bottom: CY + group, limit: BOT, headW: info.head, gradeW: info.gradeW || 0, tagW: info.tagW || 0, whoW: 0, whenW: 0 };
-      ctx.font = '700 32px ' + FONT; out.whoW = ctx.measureText(name).width; ctx.font = '400 25px ' + FONT; out.metaW = ctx.measureText(meta).width; out.whenW = ctx.measureText(when).width;
-      out.headRoom = CW - PAD * 2 - 120 - out.whoW - out.whenW;   // 머리 줄: 이름과 제출 시각이 겹치지 않는지(>0)
-      return new Promise(function (res) { cv.toBlob(function (b) { res({ blob: b, fit: { fs: fs, lines: lines.length, cut: cut }, meta: out }); }, 'image/png'); });
+      var out = { kind: s.kind, fs: fs, lines: lines.length, cut: cut, top: TOP, headEnd: headEnd, cardTop: CY, bottom: CY + group, limit: BOT, headGap: chk.headGap, tagW: chk.tagW || 0, tagRows: chk.tagRows || 0, badgeW: chk.badgeW || 0 };
+      ctx.font = '700 32px ' + FONT; var whoW = ctx.measureText(name).width; ctx.font = '400 25px ' + FONT; var whenW = ctx.measureText(when).width;
+      out.headRoom = CW - PAD * 2 - 120 - whoW - whenW;   // 머리 줄: 이름과 제출 시각이 겹치지 않는지(>0)
+      out.check = {
+        종류: s.kind, 후기글자: fs, 잘림: cut, 넘침: CY + group > BOT + 1,
+        글_캐릭터_여유: Math.round(chk.headGap), 위쪽_카드_간격: CY - headEnd,
+        아래칸_캐릭터_아래: chk.badgeTop != null ? chk.badgeTop >= chk.mascotBottom : chk.tagTop != null ? chk.tagTop >= chk.mascotBottom : true,
+        이름시각여유: Math.round(out.headRoom)
+      };
+      return toBlob(cv).then(function (b) { return { blob: b, fit: { fs: fs, lines: lines.length, cut: cut }, meta: out }; });
     });
+  }
+
+  // ---------- 2장: 종현쌤에게 보낸 메시지 (대화방) ----------
+  function msgWhen(r) {
+    var d = new Date(r.message_added_at || r.created_at); if (isNaN(d)) return { date: '', time: '' };
+    var h = d.getHours();
+    return { date: d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일 ' + '일월화수목금토'[d.getDay()] + '요일', time: (h < 12 ? '오전 ' : '오후 ') + (h % 12 || 12) + ':' + pad2(d.getMinutes()) };
+  }
+  // 말풍선 나누기: 문단(줄바꿈)마다 1개, 한 문단이 MAXL 줄보다 길면 문장 경계에서 나눔 — 글은 원문 위치 그대로
+  function msgBubbles(ctx, text, maxW, MAXL) {
+    var out = [], sents = sentences(text), re = /[^\n]+/g, m;
+    while ((m = re.exec(text))) {
+      var ps = m.index, pe = m.index + m[0].length;
+      while (ps < pe && /\s/.test(text[ps])) ps++; while (pe > ps && /\s/.test(text[pe - 1])) pe--;
+      if (pe <= ps) continue;
+      if (wrapR(ctx, text, ps, pe, maxW).length <= MAXL) { out.push([ps, pe]); continue; }
+      var ss = sents.filter(function (x) { return x.s >= ps && x.e <= pe; }), cs = -1, ce = -1;
+      ss.forEach(function (x) {
+        if (cs < 0) { cs = x.s; ce = x.e; return; }
+        if (wrapR(ctx, text, cs, x.e, maxW).length <= MAXL) { ce = x.e; return; }
+        out.push([cs, ce]); cs = x.s; ce = x.e;
+      });
+      if (cs >= 0) out.push([cs, ce]);
+    }
+    return out;
+  }
+  function drawMessage(r) {
+    var W = STORY_W, H = STORY_H, text = msgText(r), name = mask(nk(r.name)), reply = replyOf(r), wn = msgWhen(r);
+    var hlSetT = hlOf(r), hls = sentences(text).filter(function (x) { return hlSetT.indexOf(x.t) >= 0; });
+    var head = '수능 끝나고 학생에게 받은 메시지';
+    return Promise.all([storyLoadFonts(head + name + text + reply + wn.date + wn.time + '종현쌤마라톤스터디오전후'), loadImg('assets/rabbit.png'), loadImg('assets/turtle.png')]).then(function (got) {
+      var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      var ctx = cv.getContext('2d'); ctx.textBaseline = 'alphabetic';
+      var rnd = seeded(r.id * 104729 + 3);
+      paper(ctx, rnd, '#BACEE0', 'rgba(40, 70, 100, 0.05)');
+      ctx.textAlign = 'center'; ctx.font = '700 30px ' + FONT; ctx.fillStyle = '#34495E'; ctx.fillText(head, W / 2, 118);
+      var rab = got[1], tur = got[2], smh = 170;
+      if (rab) ctx.drawImage(rab, 46, H - 34 - smh, smh * rab.naturalWidth / rab.naturalHeight, smh);
+      if (tur) { var tw = smh * tur.naturalWidth / tur.naturalHeight; ctx.drawImage(tur, W - 46 - tw, H - 34 - smh, tw, smh); }
+      ctx.font = '700 30px ' + FONT; ctx.fillStyle = RED; ctx.fillText('마라톤 스터디', W / 2, 1862);
+      // 날짜 줄
+      var TOP = 170;
+      if (wn.date) {
+        ctx.font = '500 25px ' + FONT; var dw = ctx.measureText(wn.date).width + 44;
+        ctx.fillStyle = 'rgba(40, 60, 80, 0.16)'; rrect(ctx, (W - dw) / 2, 160, dw, 46, 23); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillText(wn.date, W / 2, 192); TOP = 250;
+      }
+      // 크기 맞추기: 글자 38 → 작게, 다 들어갈 때까지 (원문은 절대 자르지 않음)
+      var BOT = 1660, AX = 56, AV = 92, BX = AX + AV + 18, BWmax = 700, PX = 30, PY = 22, GAPB = 14;
+      var lay = function (fs) {
+        var lh = Math.round(fs * 1.45);
+        ctx.font = '400 ' + fs + 'px ' + FONT;
+        var bs = msgBubbles(ctx, text, BWmax - PX * 2, 6).map(function (b) {
+          var ls = wrapR(ctx, text, b[0], b[1], BWmax - PX * 2), w = 0;
+          ls.forEach(function (l) { w = Math.max(w, ctx.measureText(text.slice(l.s, l.e)).width); });
+          return { s: b[0], e: b[1], lines: ls, w: w + PX * 2, h: ls.length * lh + PY * 2 };
+        });
+        var h = 44 + bs.reduce(function (a, b) { return a + b.h + GAPB; }, 0), rp = null;
+        if (reply) {
+          ctx.font = '400 ' + fs + 'px ' + FONT;
+          var rl = wrapText(ctx, reply, 620 - PX * 2), rw = 0; rl.forEach(function (l) { rw = Math.max(rw, ctx.measureText(l).width); });
+          rp = { lines: rl, w: rw + PX * 2, h: rl.length * lh + PY * 2 }; h += 40 + 34 + rp.h;
+        }
+        return { fs: fs, lh: lh, bs: bs, rp: rp, h: h };
+      };
+      var Lo, fs;
+      for (fs = 46; fs >= 18; fs -= 1) { Lo = lay(fs); if (Lo.h <= BOT - TOP) break; }
+      if (!Lo || Lo.h > BOT - TOP) Lo = lay(18);
+      var y = Math.round(TOP + Math.max(0, (BOT - TOP - Lo.h) / 2.2));
+      // 프로필 + 이름
+      ctx.fillStyle = '#E9DCCB'; rrect(ctx, AX, y, AV, AV, 34); ctx.fill();
+      ctx.textAlign = 'center'; ctx.font = '700 38px ' + FONT; ctx.fillStyle = '#8A7764'; ctx.fillText(name.charAt(0), AX + AV / 2, y + AV / 2 + 14);
+      ctx.textAlign = 'left'; ctx.font = '500 27px ' + FONT; ctx.fillStyle = '#3B4A59'; ctx.fillText(name, BX, y + 28);
+      y += 44;
+      Lo.bs.forEach(function (b, bi) {
+        ctx.fillStyle = '#FFFFFF'; rrect(ctx, BX, y, b.w, b.h, 26); ctx.fill();
+        if (bi === 0) { ctx.beginPath(); ctx.moveTo(BX + 2, y + 18); ctx.lineTo(BX - 14, y + 8); ctx.lineTo(BX + 4, y + 38); ctx.closePath(); ctx.fill(); }
+        b.lines.forEach(function (l, li) {
+          var base = y + PY + li * Lo.lh + Math.round(Lo.fs * 1.0), tx = BX + PX;
+          ctx.font = '400 ' + Lo.fs + 'px ' + FONT;
+          hls.forEach(function (h) {
+            var a = Math.max(l.s, h.s), c = Math.min(l.e, h.e);
+            if (c <= a || !text.slice(a, c).trim()) return;
+            var xa = ctx.measureText(text.slice(l.s, a)).width, xc = ctx.measureText(text.slice(l.s, c)).width;
+            highlighter(ctx, tx + xa, tx + xc, base - Lo.fs * 0.26, Lo.fs * 0.55, rnd, 3);
+          });
+          ctx.fillStyle = '#1E1E1E'; ctx.fillText(text.slice(l.s, l.e), tx, base);
+        });
+        if (bi === Lo.bs.length - 1 && wn.time) { ctx.font = '400 22px ' + FONT; ctx.fillStyle = '#556677'; if (BX + b.w + 12 + ctx.measureText(wn.time).width < W - 30) ctx.fillText(wn.time, BX + b.w + 12, y + b.h - 4); }
+        y += b.h + GAPB;
+      });
+      if (Lo.rp) {   // 종현쌤 답글: 오른쪽 내 말풍선
+        y += 40;
+        var rx = W - 56 - Lo.rp.w;
+        ctx.textAlign = 'right'; ctx.font = '600 24px ' + FONT; ctx.fillStyle = '#3B4A59'; ctx.fillText('종현쌤', W - 60, y + 22); ctx.textAlign = 'left';
+        y += 34;
+        ctx.fillStyle = '#FFE94A'; rrect(ctx, rx, y, Lo.rp.w, Lo.rp.h, 26); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(rx + Lo.rp.w - 2, y + 18); ctx.lineTo(rx + Lo.rp.w + 14, y + 8); ctx.lineTo(rx + Lo.rp.w - 4, y + 38); ctx.closePath(); ctx.fill();
+        ctx.font = '400 ' + Lo.fs + 'px ' + FONT; ctx.fillStyle = '#1E1E1E';
+        Lo.rp.lines.forEach(function (ln, i) { ctx.fillText(ln, rx + PX, y + PY + i * Lo.lh + Lo.fs); });
+        y += Lo.rp.h;
+      }
+      // 원문 그대로인지: 말풍선 글을 이어 붙이면 원문과 같아야 함(띄어쓰기·줄바꿈만 다름)
+      var joined = Lo.bs.map(function (b) { return b.lines.map(function (l) { return text.slice(l.s, l.e); }).join(' '); }).join(' ');
+      var same = joined.replace(/\s+/g, '') === text.replace(/\s+/g, '');
+      var meta = { bubbles: Lo.bs.length, fs: Lo.fs, bottom: y, limit: BOT, over: y > BOT + 1, same: same, hl: hls.length,
+        check: { 종류: '메시지', 말풍선: Lo.bs.length, 글자: Lo.fs, 넘침: y > BOT + 1, 원문그대로: same, 형광펜문장: hls.length } };
+      return toBlob(cv).then(function (b) { return { blob: b, meta: meta }; });
+    });
+  }
+  // 학생 1명 = [1장(후기 있을 때), 2장(한마디 있을 때)]
+  function drawSet(r, no) {
+    var out = [];
+    var p = Promise.resolve();
+    if (hasReview(r)) p = p.then(function () { return drawStory(r, no).then(function (o) { out.push({ name: storyFile(r, no), blob: o.blob, meta: o.meta, cut: o.fit.cut }); }); });
+    if (hasMsg(r)) p = p.then(function () { return drawMessage(r).then(function (o) { out.push({ name: storyFileMsg(r, no), blob: o.blob, meta: o.meta, cut: o.meta.over }); }); });
+    return p.then(function () { return out; });
   }
   function saveBlob(blob, name) {
     var a = document.createElement('a'), u = URL.createObjectURL(blob);
@@ -697,50 +905,70 @@
     return new Blob(parts.concat(central, [new Uint8Array(e.buffer)]), { type: 'application/zip' });
   }
   function storyOne(id) {
-    var r = respById(id); if (!r || !hasReview(r)) return;
+    var r = respById(id); if (!r || !hasStory(r)) return;
     var kind = storyInfo(r).kind, no = numLast(kind) + 1;
-    return drawStory(r, no).then(function (o) {
-      numSet(kind, no); saveBlob(o.blob, storyFile(r, no));
-      toast(kind + ' ' + pad2(no) + ' 스토리 이미지를 받았습니다' + (o.fit.cut ? ' · 후기가 너무 길어 끝을 줄였습니다' : ''));
+    return drawSet(r, no).then(function (set) {
+      numSet(kind, no);
+      set.forEach(function (f, i) { setTimeout(function () { saveBlob(f.blob, f.name); }, i * 400); });
+      var cut = set.filter(function (f) { return f.cut; }).length;
+      toast(kind + ' ' + pad2(no) + ' 스토리 이미지 ' + set.length + '장을 받았습니다' + (cut ? ' · 글이 너무 길어 넘친 것 ' + cut + '장' : ''));
       render(); if (UI.detail != null) renderDetail();
     }).catch(err);
   }
   // 체크한 순서대로, CASE · VOICE 번호는 따로 01부터
   function selNos(sel) {
     var c = { CASE: 0, VOICE: 0 }, m = {};
-    sel.forEach(function (id) { var r = respById(id); if (!r || !hasReview(r)) return; var k = storyInfo(r).kind; c[k]++; m[id] = { kind: k, no: c[k] }; });
+    sel.forEach(function (id) { var r = respById(id); if (!r || !hasStory(r)) return; var k = storyInfo(r).kind; c[k]++; m[id] = { kind: k, no: c[k] }; });
     return { map: m, count: c };
   }
   function storyBulk() {
-    var ids = (UI.sel || []).filter(function (id) { var r = respById(id); return r && hasReview(r); });
+    var ids = (UI.sel || []).filter(function (id) { var r = respById(id); return r && hasStory(r); });
     if (!ids.length) return;
     var nos = selNos(ids), files = [], cut = 0, i = 0;
-    toast('스토리 이미지 ' + ids.length + '장 만드는 중…');
+    toast('스토리 이미지 ' + ids.length + '명 만드는 중…');
     (function next() {
       if (i >= ids.length) {
         ['CASE', 'VOICE'].forEach(function (k) { if (nos.count[k]) numSet(k, Math.max(numLast(k), nos.count[k])); });
         saveBlob(makeZip(files), '스토리_' + (nos.count.CASE ? 'CASE' + nos.count.CASE : '') + (nos.count.CASE && nos.count.VOICE ? '_' : '') + (nos.count.VOICE ? 'VOICE' + nos.count.VOICE : '') + '_' + stamp() + '.zip');
-        toast('스토리 이미지 ' + files.length + '장을 zip 으로 받았습니다' + (cut ? ' · 후기가 너무 길어 끝을 줄인 것 ' + cut + '장' : ''));
+        toast('스토리 이미지 ' + files.length + '장(' + ids.length + '명)을 zip 으로 받았습니다' + (cut ? ' · 글이 너무 길어 넘친 것 ' + cut + '장' : ''));
         UI.sel = []; render(); return Promise.resolve();
       }
       var r = respById(ids[i]), no = nos.map[ids[i]].no; i++;
-      return drawStory(r, no).then(function (o) {
-        if (o.fit.cut) cut++;
-        return o.blob.arrayBuffer().then(function (ab) { files.push({ name: storyFile(r, no), data: new Uint8Array(ab) }); });
+      return drawSet(r, no).then(function (set) {
+        return set.reduce(function (p, f) {
+          return p.then(function () { if (f.cut) cut++; return f.blob.arrayBuffer().then(function (ab) { files.push({ name: f.name, data: new Uint8Array(ab) }); }); });
+        }, Promise.resolve());
       }).then(next);
     })().catch(err);
   }
   function storyBtn(r) {
-    if (!hasReview(r)) return '<button class="mini" disabled style="opacity:.45">스토리 이미지 받기</button> <span class="small muted">후기 없음</span>';
-    return '<button class="mini deep" data-story="' + r.id + '">스토리 이미지 받기 (' + storyInfo(r).kind + ')</button>' +
+    if (!hasStory(r)) return '<button class="mini" disabled style="opacity:.45">스토리 이미지 받기</button> <span class="small muted">후기·한마디 없음</span>';
+    var n = (hasReview(r) ? 1 : 0) + (hasMsg(r) ? 1 : 0);
+    return '<button class="mini deep" data-story="' + r.id + '">스토리 이미지 받기 (' + storyInfo(r).kind + ' · ' + n + '장)</button>' +
       '<div class="dreply"><input class="inp" id="dreply" data-reply="' + r.id + '" maxlength="80" placeholder="종현쌤 답글 한 줄 (비우면 이미지에 안 나옴)" value="' + esc(replyOf(r)) + '">' +
-      '<span class="small muted">이 브라우저에만 저장 · 스토리 이미지 카드 아래에 붙음</span></div>';
+      '<span class="small muted">이 브라우저에만 저장 · ' + (hasMsg(r) ? '2장(메시지) 맨 아래 오른쪽 말풍선' : '후기 카드 아래 말풍선') + '</span></div>';
+  }
+  // 상세 패널: 한마디를 문장으로 나눠 형광펜 고르기 (이 브라우저에만 저장)
+  function hlPicker(r) {
+    if (!hasMsg(r)) return '';
+    var on = hlOf(r), ss = sentences(msgText(r));
+    return '<div class="hlpick"><div class="small muted">스토리 2장 형광펜 — 체크한 문장만 칠함 (이 브라우저에만 저장)</div>' +
+      ss.map(function (x, i) { return '<label><input type="checkbox" data-hl="' + r.id + '" data-hli="' + i + '"' + (on.indexOf(x.t) >= 0 ? ' checked' : '') + '> <span>' + esc(x.t) + '</span></label>'; }).join('') + '</div>';
+  }
+  function hlBind(el, r) {
+    var ss = sentences(msgText(r));
+    el.querySelectorAll('[data-hl]').forEach(function (c) {
+      c.onchange = function () {
+        var picked = []; el.querySelectorAll('[data-hl]').forEach(function (x) { if (x.checked) picked.push(ss[Number(x.getAttribute('data-hli'))].t); });
+        hlSet(r.id, picked);
+      };
+    });
   }
   // 목록 체크박스: 체크한 순서 = 번호 순서 (CASE C01… · VOICE V01… 따로)
   function selTag(x) { return x ? x.kind.charAt(0) + pad2(x.no) : ''; }
   function selBox(r) {
     var x = selNos(UI.sel || []).map[r.id];
-    if (!hasReview(r)) return '<label class="sel off" title="후기 없음 — 스토리 이미지를 만들 수 없음"><input type="checkbox" disabled><i>후기 없음</i></label>';
+    if (!hasStory(r)) return '<label class="sel off" title="후기·한마디 없음 — 스토리 이미지를 만들 수 없음"><input type="checkbox" disabled><i>없음</i></label>';
     return '<label class="sel" title="스토리 이미지 고르기 (' + storyInfo(r).kind + ')"><input type="checkbox" data-sel="' + r.id + '"' + (x ? ' checked' : '') + '><i>' + selTag(x) + '</i></label>';
   }
   function selRefresh(v) {
@@ -748,7 +976,7 @@
     v.querySelectorAll('[data-sel]').forEach(function (c) { c.nextElementSibling.textContent = selTag(m[Number(c.getAttribute('data-sel'))]); });
     $('selcnt').textContent = sel.length; $('storybulk').disabled = !sel.length;
   }
-  window.__story = { draw: drawStory, file: storyFile, info: storyInfo, replySet: replySet };   // 시험·점검용
+  window.__story = { draw: drawStory, drawMsg: drawMessage, drawSet: drawSet, file: storyFile, fileMsg: storyFileMsg, info: storyInfo, replySet: replySet, hlSet: hlSet, sentences: sentences };   // 시험·점검용
 
   /* ============ 통계 ============ */
   function filtered() {

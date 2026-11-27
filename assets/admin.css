@@ -188,3 +188,7 @@ label.sel.off { cursor: default; opacity: .5; }
 label.sel.off i { color: var(--muted); font-weight: 600; min-width: 0; }
 .dreply { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
 .dreply .inp { font-size: 14px; padding: 9px 12px; height: auto; }
+.hlpick { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--line, #e5e0d8); padding-top: 8px; }
+.hlpick label { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.hlpick input { margin-top: 3px; accent-color: #E8B400; flex: none; }
+.hlpick input:checked + span { background: linear-gradient(transparent 45%, rgba(255, 221, 64, .75) 45%); }
