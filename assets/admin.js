@@ -439,7 +439,7 @@
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
   function maskO(name) { name = nk(name); return name ? name[0] + 'O'.repeat(Math.max(name.length - 1, 2)) : ''; }
   function hasReview(r) { return !!(r.review && String(r.review).trim()); }
-  // 출발점: 학생이 고른 수강 전 등급. 없으면 6·9모 중 낮은 쪽. 수능 가채점 등급이 출발점보다 좋아야 CASE.
+  // 출발점: 학생이 고른 수강 전 등급. 없으면 6·9모 중 낮은 쪽.
   function storyInfo(r) {
     var p = preOf(r), m6 = gradeOf(r, 'm6').g, m9 = gradeOf(r, 'm9').g, sn = gradeOf(r, 'sn').g;
     var pts = [];
@@ -447,7 +447,8 @@
     if (m6 != null) pts.push({ l: '6모', g: m6 });
     if (m9 != null) pts.push({ l: '9모', g: m9 });
     if (sn != null) pts.push({ l: '수능', g: sn });
-    var up = p.g != null && sn != null && sn < p.g ? p.g - sn : 0;
+    // CASE: 수능이 출발점보다 좋고, 9모를 봤다면 수능이 9모보다 나쁘지 않을 때만 (▲는 출발점 대비)
+    var up = p.g != null && sn != null && sn < p.g && (m9 == null || sn <= m9) ? p.g - sn : 0;
     return { start: p.g, sn: sn, pts: pts, up: up, kind: up ? 'CASE' : 'VOICE' };
   }
   function storyFile(r, no) {
